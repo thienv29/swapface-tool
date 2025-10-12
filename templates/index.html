@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Face Swap Tool 😎</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+    input { margin: 10px; }
+    img { max-width: 500px; margin-top: 20px; border-radius: 12px; box-shadow: 0 0 10px #ccc; }
+  </style>
+</head>
+<body>
+  <h2>✨ Face Swap Demo (M1 Version)</h2>
+  <form id="swapForm" enctype="multipart/form-data">
+    <label>Ảnh Source (mặt muốn dán):</label><br>
+    <input type="file" name="source" required><br>
+    <label>Ảnh Target (ảnh muốn thay mặt):</label><br>
+    <input type="file" name="target" required><br>
+    <button type="submit">🚀 Swap Ngay!</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById("swapForm");
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const formData = new FormData(form);
+      document.getElementById("result").innerHTML = "⏳ Đang xử lý...";
+      const res = await fetch("/swapface", { method: "POST", body: formData });
+      const data = await res.json();
+      if (data.result) {
+        document.getElementById("result").innerHTML = `
+          ✅ <br><img src="${data.result}" alt="Kết quả">`;
+      } else {
+        document.getElementById("result").innerText = "❌ Lỗi: " + data.error;
+      }
+    });
+  </script>
+</body>
+</html>
