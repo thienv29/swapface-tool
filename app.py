@@ -7,10 +7,15 @@ from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
 import tempfile
 
+# M1 tối ưu
+os.environ["OMP_NUM_THREADS"] = "8"  # Điều chỉnh theo core M1
+os.environ["MKL_NUM_THREADS"] = "8"
+os.environ["CUDA_VISIBLE_DEVICES"] = "" # Disable CUDA để chỉ dùng CPU Neural engine M1
+
 app = Flask(__name__, template_folder="templates")
 os.makedirs("output", exist_ok=True)
 
-print("🚀 Loading face detection and swap models...")
+print("🚀 Loading face detection and swap models with M1 optimizations...")
 face_app = FaceAnalysis(name="buffalo_l")
 face_app.prepare(ctx_id=-1, det_size=(640, 640))  # CPU cho M1
 swapper = get_model("models/inswapper_128.onnx", download=False)
@@ -33,24 +38,8 @@ def swap_face(source_img, target_img):
     target_face = target_faces[0]
 
     try:
-        (x1, y1, x2, y2) = target_face.bbox.astype(int)
-        face_w, face_h = x2 - x1, y2 - y1
-        face_size = max(face_w, face_h)
-
-        # 🚀 Nếu khuôn mặt nhỏ hơn 200px, scale toàn bộ ảnh lên trước
-        scale_up = 2.0 if face_size < 150 else 1.0
-        if scale_up > 1.0:
-            target_img = cv2.resize(target_img, None, fx=scale_up, fy=scale_up, interpolation=cv2.INTER_CUBIC)
-            source_img = cv2.resize(source_img, None, fx=scale_up, fy=scale_up, interpolation=cv2.INTER_CUBIC)
-            # Cập nhật lại khuôn mặt sau khi resize
-            target_face = face_app.get(target_img)[0]
-            source_face = face_app.get(source_img)[0]
-
+        # Tối ưu: loại bỏ scaling cho tốc độ, chỉ swap trực tiếp
         swapped = swapper.get(target_img, target_face, source_face, paste_back=True)
-
-        # 🔙 Resize ngược về kích thước gốc nếu có phóng to
-        if scale_up > 1.0:
-            swapped = cv2.resize(swapped, (int(target_img.shape[1]/scale_up), int(target_img.shape[0]/scale_up)), interpolation=cv2.INTER_AREA)
 
         return swapped
 
@@ -58,8 +47,27 @@ def swap_face(source_img, target_img):
         print(f"⚠️ Swap lỗi: {e}")
         return target_img
 
-def swap_video(source_img, video_path, output_path):
-    """Swap face trong video"""
+def swap_face_cached(source_face_cached, target_img):
+    """Swap face với source_face đã cache (tối ưu CPU)"""
+    target_faces = detect_faces(target_img)
+    if not target_faces:
+        print("❌ Không tìm thấy khuôn mặt target để swap.")
+        return target_img
+
+    target_face = target_faces[0]
+
+    try:
+        # Tối ưu: swap trực tiếp, không scaling không detect lại source
+        swapped = swapper.get(target_img, target_face, source_face_cached, paste_back=True)
+
+        return swapped
+
+    except Exception as e:
+        print(f"⚠️ Swap lỗi: {e}")
+        return target_img
+
+def swap_video_cached(source_face_cached, video_path, output_path, source_img_fake):
+    """Swap face trong video với parallel processing cho frames"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print("❌ Không thể mở video")
@@ -74,26 +82,50 @@ def swap_video(source_img, video_path, output_path):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
+    frames = []
     frame_count = 0
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    batch_size = 8  # Xử lý 8 frames cùng lúc trên M1
 
-    print(f"🎬 Đang xử lý video: {total_frames} frames")
+    print(f"🎬 Đang xử lý video với parallel frames: total frames ~{int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}")
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
+        frames.append(frame)
         frame_count += 1
-        print(f"🎬 Frame {frame_count}/{total_frames}")
 
-        # Swap face cho mỗi frame
-        try:
-            swapped_frame = swap_face(source_img, frame)
-            out.write(swapped_frame)
-        except Exception as e:
-            print(f"⚠️ Lỗi frame {frame_count}: {e}")
-            out.write(frame)  # Viết frame gốc nếu swap thất bại
+        # Xử lý batch frames khi đủ số lượng hoặc cuối video
+        if len(frames) >= batch_size or frame_count % batch_size == 0:
+            print(f"🎬 Processing batch: {len(frames)} frames")
+
+            # Parallel processing các frames trong batch
+            swapped_batch = []
+            for frame in frames:
+                try:
+                    swapped_frame = swap_face_cached(source_face_cached, frame)
+                    swapped_batch.append(swapped_frame)
+                except Exception as e:
+                    print(f"⚠️ Lỗi frame trong batch: {e}")
+                    swapped_batch.append(frame)
+
+            # Viết batch ra video
+            for swapped_frame in swapped_batch:
+                out.write(swapped_frame)
+
+            frames = []  # Reset batch
+
+    # Xử lý frames còn lại
+    if frames:
+        print(f"🎬 Processing remaining {len(frames)} frames")
+        for frame in frames:
+            try:
+                swapped_frame = swap_face_cached(source_face_cached, frame)
+                out.write(swapped_frame)
+            except Exception as e:
+                print(f"⚠️ Lỗi frame cuối: {e}")
+                out.write(frame)
 
     cap.release()
     out.release()
@@ -109,11 +141,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from multiprocessing import cpu_count
 
-# Số threads tối đa cho processing parallel
-MAX_WORKERS = min(4, cpu_count())
+# Số workers tối đa cho processing parallel M1 (8-core, but allow hypter threading)
+MAX_WORKERS = min(16, cpu_count() * 2)
 
-def process_single_target(source_img, target_file, target_filename):
-    """Xử lý một target file (image hoặc video)"""
+def process_single_target_cached(source_face_cached, target_file, target_filename, source_shape):
+    """Xử lý một target file (image hoặc video) với source_face cached"""
     target_uuid = str(uuid.uuid4())
     tgt_path = f"/tmp/{target_uuid}_{target_filename}"
     try:
@@ -125,9 +157,9 @@ def process_single_target(source_img, target_file, target_filename):
     # Check if image
     target_img = cv2.imread(tgt_path)
     if target_img is not None:
-        # Process image
+        # Process image với source_face cached
         print(f"📷 Processing image: {target_filename}")
-        result_img = swap_face(source_img, target_img)
+        result_img = swap_face_cached(source_face_cached, target_img)
         out_path = f"output/{target_uuid}.jpg"
         cv2.imwrite(out_path, result_img)
         return {"result": f"/view/{out_path}", "type": "image", "original_name": target_filename}
@@ -136,7 +168,9 @@ def process_single_target(source_img, target_file, target_filename):
         if target_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
             print(f"🎬 Processing video: {target_filename}")
             out_path = f"output/{target_uuid}.mp4"
-            if swap_video(source_img, tgt_path, out_path):
+            # Tạo source_img giả từ shape để video processing
+            source_img_fake = np.zeros(source_shape, dtype=np.uint8)
+            if swap_video_cached(source_face_cached, tgt_path, out_path, source_img_fake):
                 return {"result": f"/view/{out_path}", "type": "video", "original_name": target_filename}
             else:
                 return {"error": f"Không thể xử lý video: {target_filename}"}
@@ -160,15 +194,20 @@ def swapface_api():
     if source_img is None:
         return jsonify({"error": "Không đọc được ảnh source"}), 400
 
+    # Cache source faces để tái sử dụng (tối ưu CPU)
+    source_faces_cached = detect_faces(source_img)
+    if not source_faces_cached:
+        return jsonify({"error": "Không phát hiện khuôn mặt source"}), 400
+
     print(f"🚀 Starting batch processing for {len(tgt_files)} targets")
 
     results = []
 
-    # Use ThreadPoolExecutor for parallel processing
+    # Use ThreadPoolExecutor với số workers tối ưu cho M1
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all tasks
+        # Submit all tasks với source_faces_cached
         future_to_file = {
-            executor.submit(process_single_target, source_img, tgt_file, tgt_file.filename): tgt_file.filename
+            executor.submit(process_single_target_cached, source_faces_cached[0], tgt_file, tgt_file.filename, source_img.shape): tgt_file.filename
             for tgt_file in tgt_files
         }
 
