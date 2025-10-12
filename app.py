@@ -32,30 +32,51 @@ def swap_face(source_img, target_img):
     target_face = target_faces[0]
 
     try:
+        # 🧠 Swap đúng cú pháp InsightFace 0.7+
+        # Kiểm tra nếu đối tượng không có normed_embedding (bị numpy hóa)
         if isinstance(source_face, np.ndarray) or not hasattr(source_face, "normed_embedding"):
             source_face = face_app.get(source_img)[0]
         if isinstance(target_face, np.ndarray) or not hasattr(target_face, "normed_embedding"):
             target_face = face_app.get(target_img)[0]
 
+        # Gọi đúng chuẩn API của inswapper
         swapped = swapper.get(target_img, target_face, source_face, paste_back=True)
 
+        # 🎨 Color transfer nhẹ để khớp tone da
+        def color_transfer(src, dst):
+            src_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
+            dst_lab = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+            src_mean, src_std = cv2.meanStdDev(src_lab)
+            dst_mean, dst_std = cv2.meanStdDev(dst_lab)
+
+            # Chuyển về shape (1, 1, 3) để broadcast được
+            src_mean = src_mean.reshape(1, 1, 3)
+            src_std = src_std.reshape(1, 1, 3)
+            dst_mean = dst_mean.reshape(1, 1, 3)
+            dst_std = dst_std.reshape(1, 1, 3)
+
+            src_std[src_std == 0] = 1
+            result = (src_lab - src_mean) * (dst_std / src_std) + dst_mean
+            result = np.clip(result, 0, 255).astype(np.uint8)
+            return cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
+
         (x1, y1, x2, y2) = target_face.bbox.astype(int)
-        face_crop = swapped[y1:y2, x1:x2]
         target_crop = target_img[y1:y2, x1:x2]
+        swapped_crop = swapped[y1:y2, x1:x2]
 
-        # 🩹 Tạo mask mềm quanh khuôn mặt
-        h, w = face_crop.shape[:2]
-        mask = np.zeros((h, w), dtype=np.float32)
-        cv2.circle(mask, (w // 2, h // 2), int(min(h, w) * 0.45), 1, -1)
-        mask = cv2.GaussianBlur(mask, (31, 31), 10)
-        mask = np.expand_dims(mask, axis=2)
+        swapped_color = color_transfer(swapped_crop, target_crop)
 
-        # 🧩 Blend thủ công (không dùng seamlessClone)
-        blended = face_crop.astype(np.float32) * mask + target_crop.astype(np.float32) * (1 - mask)
-        blended = np.clip(blended, 0, 255).astype(np.uint8)
+        # 🩹 Blend mịn, không mờ
+        mask = np.zeros_like(target_crop[:, :, 0], dtype=np.uint8)
+        center = (mask.shape[1] // 2, mask.shape[0] // 2)
+        cv2.circle(mask, center, min(mask.shape)//2, 255, -1)
+        mask = cv2.GaussianBlur(mask, (51, 51), 15)
 
-        # ✨ Sharpen nhẹ vùng blend (trả lại độ nét)
-        sharpen = cv2.addWeighted(blended, 1.25, cv2.GaussianBlur(blended, (0, 0), 2), -0.25, 0)
+        blended = cv2.seamlessClone(swapped_color, target_crop, mask, center, cv2.NORMAL_CLONE)
+
+        # ✨ Sharpen nhẹ
+        sharpen = cv2.addWeighted(blended, 1.3, cv2.GaussianBlur(blended, (0, 0), 2), -0.3, 0)
 
         result = target_img.copy()
         result[y1:y2, x1:x2] = sharpen
