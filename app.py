@@ -12,7 +12,7 @@ os.makedirs("output", exist_ok=True)
 print("🚀 Loading face detection and swap models...")
 face_app = FaceAnalysis(name="buffalo_l")
 face_app.prepare(ctx_id=-1, det_size=(640, 640))  # CPU cho M1
-swapper = get_model("/Users/thienvuquy/.insightface/models/inswapper_128.onnx", download=False)
+swapper = get_model("models/inswapper_128.onnx", download=False)
 print("✅ Models loaded successfully!")
 
 def detect_faces(img):
