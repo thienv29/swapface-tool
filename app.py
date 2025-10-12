@@ -5,6 +5,7 @@ import os
 import uuid
 from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
+import tempfile
 
 app = Flask(__name__, template_folder="templates")
 os.makedirs("output", exist_ok=True)
@@ -57,35 +58,137 @@ def swap_face(source_img, target_img):
         print(f"⚠️ Swap lỗi: {e}")
         return target_img
 
+def swap_video(source_img, video_path, output_path):
+    """Swap face trong video"""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print("❌ Không thể mở video")
+        return False
+
+    # Lấy thông tin video
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # Khởi tạo video writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
+    frame_count = 0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    print(f"🎬 Đang xử lý video: {total_frames} frames")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame_count += 1
+        print(f"🎬 Frame {frame_count}/{total_frames}")
+
+        # Swap face cho mỗi frame
+        try:
+            swapped_frame = swap_face(source_img, frame)
+            out.write(swapped_frame)
+        except Exception as e:
+            print(f"⚠️ Lỗi frame {frame_count}: {e}")
+            out.write(frame)  # Viết frame gốc nếu swap thất bại
+
+    cap.release()
+    out.release()
+    print(f"✅ Video hoàn thành: {output_path}")
+    return True
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
+import os
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from multiprocessing import cpu_count
+
+# Số threads tối đa cho processing parallel
+MAX_WORKERS = min(4, cpu_count())
+
+def process_single_target(source_img, target_file, target_filename):
+    """Xử lý một target file (image hoặc video)"""
+    target_uuid = str(uuid.uuid4())
+    tgt_path = f"/tmp/{target_uuid}_{target_filename}"
+    try:
+        target_file.save(tgt_path)
+    except Exception as e:
+        print(f"❌ Lỗi lưu file tạm: {e}")
+        return {"error": f"Không thể lưu file: {target_filename}"}
+
+    # Check if image
+    target_img = cv2.imread(tgt_path)
+    if target_img is not None:
+        # Process image
+        print(f"📷 Processing image: {target_filename}")
+        result_img = swap_face(source_img, target_img)
+        out_path = f"output/{target_uuid}.jpg"
+        cv2.imwrite(out_path, result_img)
+        return {"result": f"/view/{out_path}", "type": "image", "original_name": target_filename}
+    else:
+        # Check if video
+        if target_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+            print(f"🎬 Processing video: {target_filename}")
+            out_path = f"output/{target_uuid}.mp4"
+            if swap_video(source_img, tgt_path, out_path):
+                return {"result": f"/view/{out_path}", "type": "video", "original_name": target_filename}
+            else:
+                return {"error": f"Không thể xử lý video: {target_filename}"}
+        else:
+            return {"error": f"File không hỗ trợ: {target_filename}"}
+
 @app.route("/swapface", methods=["POST"])
 def swapface_api():
     src_file = request.files.get("source")
-    tgt_file = request.files.get("target")
+    tgt_files = request.files.getlist("targets")  # Get multiple targets
 
-    if not src_file or not tgt_file:
-        return jsonify({"error": "Thiếu file source hoặc target"}), 400
+    if not src_file or not tgt_files:
+        return jsonify({"error": "Thiếu file source hoặc targets"}), 400
 
-    src_path = f"/tmp/{uuid.uuid4()}_{src_file.filename}"
-    tgt_path = f"/tmp/{uuid.uuid4()}_{tgt_file.filename}"
+    # Save source file
+    src_uuid = str(uuid.uuid4())
+    src_path = f"/tmp/{src_uuid}_{src_file.filename}"
     src_file.save(src_path)
-    tgt_file.save(tgt_path)
 
     source_img = cv2.imread(src_path)
-    target_img = cv2.imread(tgt_path)
-    if source_img is None or target_img is None:
-        return jsonify({"error": "Không đọc được ảnh"}), 400
+    if source_img is None:
+        return jsonify({"error": "Không đọc được ảnh source"}), 400
 
-    result_img = swap_face(source_img, target_img)
-    out_path = f"output/{uuid.uuid4()}.jpg"
-    cv2.imwrite(out_path, result_img)
-    print(f"✅ Kết quả lưu tại: {out_path}")
+    print(f"🚀 Starting batch processing for {len(tgt_files)} targets")
 
-    return jsonify({"result": f"/view/{out_path}", "type": "image"})
+    results = []
+
+    # Use ThreadPoolExecutor for parallel processing
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        # Submit all tasks
+        future_to_file = {
+            executor.submit(process_single_target, source_img, tgt_file, tgt_file.filename): tgt_file.filename
+            for tgt_file in tgt_files
+        }
+
+        # Collect results as they complete
+        for future in future_to_file:
+            try:
+                result = future.result()
+                results.append(result)
+                print(f"✅ Completed: {result.get('original_name', 'Unknown')}")
+            except Exception as e:
+                print(f"❌ Error processing file: {e}")
+                results.append({"error": f"Lỗi xử lý: {e}"})
+
+    # Clean up temp source file
+    try:
+        os.remove(src_path)
+    except Exception as e:
+        print(f"⚠️ Không thể xóa temp source file: {e}")
+
+    return jsonify({"results": results})
 
 
 @app.route("/view/<path:filename>")

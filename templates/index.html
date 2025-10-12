@@ -2,40 +2,76 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <title>Face Swap Tool 😎</title>
-  <style>
-    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
-    input { margin: 10px; }
-    img { max-width: 500px; margin-top: 20px; border-radius: 12px; box-shadow: 0 0 10px #ccc; }
-  </style>
-</head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face Swap Tool ✨</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
 <body>
-  <h2>✨ Face Swap Demo (M1 Version)</h2>
-  <form id="swapForm" enctype="multipart/form-data">
-    <label>Ảnh Source (mặt muốn dán):</label><br>
-    <input type="file" name="source" required><br>
-    <label>Ảnh Target (ảnh muốn thay mặt):</label><br>
-    <input type="file" name="target" required><br>
-    <button type="submit">🚀 Swap Ngay!</button>
-  </form>
+  <div class="container">
+    <header class="header">
+      <h1>Face Swap Tool</h1>
+      <p>Đổi khuôn mặt thông minh với công nghệ AI tiên tiến. Hỗ trợ ảnh và video!</p>
+    </header>
 
-  <div id="result"></div>
+    <div class="app-card">
+      <div class="app-header">
+        <h2>🚀 Công Cụ Đổi Khuôn Mặt</h2>
+        <p>Zipped version optimized cho M1 chip</p>
+      </div>
 
-  <script>
-    const form = document.getElementById("swapForm");
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const formData = new FormData(form);
-      document.getElementById("result").innerHTML = "⏳ Đang xử lý...";
-      const res = await fetch("/swapface", { method: "POST", body: formData });
-      const data = await res.json();
-      if (data.result) {
-        document.getElementById("result").innerHTML = `
-          ✅ <br><img src="${data.result}" alt="Kết quả">`;
-      } else {
-        document.getElementById("result").innerText = "❌ Lỗi: " + data.error;
-      }
-    });
-  </script>
+      <div class="app-content">
+        <form id="swapForm" enctype="multipart/form-data">
+          <div class="upload-section">
+            <div class="upload-container" id="sourceContainer">
+              <input type="file" name="source" id="sourceInput" class="file-input" required accept="image/*">
+              <label for="sourceInput" class="upload-label">
+                <div class="upload-icon">
+                  <i class="fas fa-user-plus"></i>
+                </div>
+                <div class="upload-text">Ảnh Source</div>
+                <div class="upload-hint">Chọn mặt muốn dán vào</div>
+                <div class="upload-hint">Support: JPG, PNG, WebP</div>
+              </label>
+              <div class="file-preview" id="sourcePreview" style="display: none;"></div>
+            </div>
+
+            <div class="upload-container" id="targetsContainer">
+              <input type="file" name="targets" id="targetsInput" class="file-input" required multiple accept="image/*,video/*" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)" ondragleave="dragLeaveHandler(event)">
+              <label for="targetsInput" class="upload-label">
+                <div class="upload-icon">
+                  <i class="fas fa-images"></i>
+                </div>
+                <div class="upload-text">Target Files</div>
+                <div class="upload-hint">Chọn nhiều file để swap cùng lúc</div>
+                <div class="upload-hint">Ảnh: JPG, PNG, WebP</div>
+                <div class="upload-hint">Video: MP4, AVI, MOV</div>
+                <div class="upload-hint">Kéo thả files vào đây!</div>
+              </label>
+              <div class="files-preview" id="targetsPreview" style="display: none;"></div>
+            </div>
+          </div>
+
+          <div class="action-section">
+            <button type="submit" class="swap-button" id="swapButton">
+              <i class="fas fa-magic"></i>
+              Swap Ngay!
+            </button>
+          </div>
+        </form>
+
+        <div id="result" class="result-section" style="display: none;"></div>
+
+        <div id="progress" class="progress-container" style="display: none;">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <div class="progress-text" id="progressText">Đang xử lý...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
