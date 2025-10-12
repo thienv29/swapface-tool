@@ -32,56 +32,26 @@ def swap_face(source_img, target_img):
     target_face = target_faces[0]
 
     try:
-        # 🧠 Swap đúng cú pháp InsightFace 0.7+
-        # Kiểm tra nếu đối tượng không có normed_embedding (bị numpy hóa)
-        if isinstance(source_face, np.ndarray) or not hasattr(source_face, "normed_embedding"):
-            source_face = face_app.get(source_img)[0]
-        if isinstance(target_face, np.ndarray) or not hasattr(target_face, "normed_embedding"):
-            target_face = face_app.get(target_img)[0]
+        (x1, y1, x2, y2) = target_face.bbox.astype(int)
+        face_w, face_h = x2 - x1, y2 - y1
+        face_size = max(face_w, face_h)
 
-        # Gọi đúng chuẩn API của inswapper
+        # 🚀 Nếu khuôn mặt nhỏ hơn 200px, scale toàn bộ ảnh lên trước
+        scale_up = 2.0 if face_size < 150 else 1.0
+        if scale_up > 1.0:
+            target_img = cv2.resize(target_img, None, fx=scale_up, fy=scale_up, interpolation=cv2.INTER_CUBIC)
+            source_img = cv2.resize(source_img, None, fx=scale_up, fy=scale_up, interpolation=cv2.INTER_CUBIC)
+            # Cập nhật lại khuôn mặt sau khi resize
+            target_face = face_app.get(target_img)[0]
+            source_face = face_app.get(source_img)[0]
+
         swapped = swapper.get(target_img, target_face, source_face, paste_back=True)
 
-        # 🎨 Color transfer nhẹ để khớp tone da
-        def color_transfer(src, dst):
-            src_lab = cv2.cvtColor(src, cv2.COLOR_BGR2LAB).astype(np.float32)
-            dst_lab = cv2.cvtColor(dst, cv2.COLOR_BGR2LAB).astype(np.float32)
+        # 🔙 Resize ngược về kích thước gốc nếu có phóng to
+        if scale_up > 1.0:
+            swapped = cv2.resize(swapped, (int(target_img.shape[1]/scale_up), int(target_img.shape[0]/scale_up)), interpolation=cv2.INTER_AREA)
 
-            src_mean, src_std = cv2.meanStdDev(src_lab)
-            dst_mean, dst_std = cv2.meanStdDev(dst_lab)
-
-            # Chuyển về shape (1, 1, 3) để broadcast được
-            src_mean = src_mean.reshape(1, 1, 3)
-            src_std = src_std.reshape(1, 1, 3)
-            dst_mean = dst_mean.reshape(1, 1, 3)
-            dst_std = dst_std.reshape(1, 1, 3)
-
-            src_std[src_std == 0] = 1
-            result = (src_lab - src_mean) * (dst_std / src_std) + dst_mean
-            result = np.clip(result, 0, 255).astype(np.uint8)
-            return cv2.cvtColor(result, cv2.COLOR_LAB2BGR)
-
-        (x1, y1, x2, y2) = target_face.bbox.astype(int)
-        target_crop = target_img[y1:y2, x1:x2]
-        swapped_crop = swapped[y1:y2, x1:x2]
-
-        swapped_color = color_transfer(swapped_crop, target_crop)
-
-        # 🩹 Blend mịn, không mờ
-        mask = np.zeros_like(target_crop[:, :, 0], dtype=np.uint8)
-        center = (mask.shape[1] // 2, mask.shape[0] // 2)
-        cv2.circle(mask, center, min(mask.shape)//2, 255, -1)
-        mask = cv2.GaussianBlur(mask, (51, 51), 15)
-
-        blended = cv2.seamlessClone(swapped_color, target_crop, mask, center, cv2.NORMAL_CLONE)
-
-        # ✨ Sharpen nhẹ
-        sharpen = cv2.addWeighted(blended, 1.3, cv2.GaussianBlur(blended, (0, 0), 2), -0.3, 0)
-
-        result = target_img.copy()
-        result[y1:y2, x1:x2] = sharpen
-
-        return result
+        return swapped
 
     except Exception as e:
         print(f"⚠️ Swap lỗi: {e}")
