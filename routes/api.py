@@ -5,7 +5,7 @@ import logging
 import sys
 import os
 from flask import Blueprint, request, jsonify
-from typing import List
+from typing import List, Tuple
 import cv2
 
 # Add parent directory to path for absolute imports
