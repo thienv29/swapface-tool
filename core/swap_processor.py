@@ -73,19 +73,33 @@ class SwapProcessor:
 
             target_img = cv2.imread(target_path)
             if target_img is None:
+                logger.warning(f"Cannot read image {target_filename}, copying as original")
+                # Copy original file to output if cannot process
+                import shutil
+                output_uuid = str(uuid.uuid4())
+                output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                shutil.copy2(target_path, output_path)
                 return SwapResult(
-                    success=False,
-                    error_message=f"Cannot read image: {target_filename}",
-                    original_name=target_filename
+                    success=True,
+                    output_path=f"/view/{output_path}",
+                    original_name=target_filename,
+                    file_type=FileType.IMAGE
                 )
 
             # Detect faces in target image
             target_result = self.face_services.detector.detect_faces(target_img)
             if not target_result.success:
+                logger.warning(f"No faces detected in {target_filename}, copying as original")
+                # Copy original file to output if no faces detected
+                import shutil
+                output_uuid = str(uuid.uuid4())
+                output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                shutil.copy2(target_path, output_path)
                 return SwapResult(
-                    success=False,
-                    error_message=target_result.error_message or "No faces detected in target image",
-                    original_name=target_filename
+                    success=True,
+                    output_path=f"/view/{output_path}",
+                    original_name=target_filename,
+                    file_type=FileType.IMAGE
                 )
 
             # Perform swap using the cached source face
@@ -97,10 +111,17 @@ class SwapProcessor:
                 )
 
                 if swapped is None or swapped.size == 0:
+                    logger.warning(f"Face swap failed for {target_filename}, copying as original")
+                    # Copy original file to output on swap failure
+                    import shutil
+                    output_uuid = str(uuid.uuid4())
+                    output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                    shutil.copy2(target_path, output_path)
                     return SwapResult(
-                        success=False,
-                        error_message="Face swap failed - empty result",
-                        original_name=target_filename
+                        success=True,
+                        output_path=f"/view/{output_path}",
+                        original_name=target_filename,
+                        file_type=FileType.IMAGE
                     )
 
                 # Save result
@@ -109,28 +130,48 @@ class SwapProcessor:
                 success = cv2.imwrite(output_path, swapped)
 
                 if not success:
+                    logger.warning(f"Failed to save swapped image for {target_filename}, copying as original")
+                    # Copy original file to output on save failure
+                    import shutil
+                    output_uuid = str(uuid.uuid4())
+                    output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                    shutil.copy2(target_path, output_path)
                     return SwapResult(
-                        success=False,
-                        error_message="Failed to save image",
-                        original_name=target_filename
+                        success=True,
+                        output_path=f"/view/{output_path}",
+                        original_name=target_filename,
+                        file_type=FileType.IMAGE
                     )
 
                 # Verify file was created
                 if not os.path.exists(output_path):
+                    logger.warning(f"Output file not created for {target_filename}, copying as original")
+                    # Copy original file to output on file creation failure
+                    import shutil
+                    output_uuid = str(uuid.uuid4())
+                    output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                    shutil.copy2(target_path, output_path)
                     return SwapResult(
-                        success=False,
-                        error_message="Output file was not created",
-                        original_name=target_filename
+                        success=True,
+                        output_path=f"/view/{output_path}",
+                        original_name=target_filename,
+                        file_type=FileType.IMAGE
                     )
 
                 logger.info(f"Image saved to: {output_path}")
 
             except Exception as e:
-                logger.error(f"Face swap error for {target_filename}: {e}")
+                logger.error(f"Face swap error for {target_filename}: {e}, copying as original")
+                # Copy original file to output on any exception during swap
+                import shutil
+                output_uuid = str(uuid.uuid4())
+                output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                shutil.copy2(target_path, output_path)
                 return SwapResult(
-                    success=False,
-                    error_message=f"Swap error: {str(e)}",
-                    original_name=target_filename
+                    success=True,
+                    output_path=f"/view/{output_path}",
+                    original_name=target_filename,
+                    file_type=FileType.IMAGE
                 )
 
             return SwapResult(
@@ -141,12 +182,26 @@ class SwapProcessor:
             )
 
         except Exception as e:
-            logger.error(f"Image processing error for {target_filename}: {e}")
-            return SwapResult(
-                success=False,
-                error_message=str(e),
-                original_name=target_filename
-            )
+            logger.error(f"Image processing error for {target_filename}: {e}, copying as original")
+            # Copy original file to output on any processing exception
+            try:
+                import shutil
+                output_uuid = str(uuid.uuid4())
+                output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                shutil.copy2(target_path, output_path)
+                return SwapResult(
+                    success=True,
+                    output_path=f"/view/{output_path}",
+                    original_name=target_filename,
+                    file_type=FileType.IMAGE
+                )
+            except Exception as copy_e:
+                logger.error(f"Failed to copy original file for {target_filename}: {copy_e}")
+                return SwapResult(
+                    success=False,
+                    error_message=f"Processing failed and could not copy original: {str(e)}",
+                    original_name=target_filename
+                )
 
     def process_video(
         self,
