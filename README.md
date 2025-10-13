@@ -1,6 +1,8 @@
-# SwapFace API Tool
+# SwapFace Tool - GTX 1650 Optimized
 
-This is a tool API for swapping faces in images while preserving the original expression from the source image. Built with Flask, InsightFace, and ONNX Runtime for face swapping functionality.
+This is a tool API optimized for Windows GTX 1650 GPU for swapping faces in images and videos while preserving the original expression from the source image. Built with Flask, InsightFace, and CUDA ONNX Runtime for high-performance face swapping functionality.
+
+**Optimized for GTX 1650 (4GB VRAM) with CUDA support**
 
 ## Features
 
@@ -13,12 +15,22 @@ This is a tool API for swapping faces in images while preserving the original ex
 
 ## Requirements
 
-- Python 3.10+
-- macOS (M1/M2 chipset supported)
+- Windows 10/11 with NVIDIA GTX 1650 GPU
+- NVIDIA GPU drivers (latest)
+- Docker Desktop with NVIDIA Docker support
+- Docker Compose
 - Git
-- Virtual environment (venv)
 
-## Installation
+## Installation & Docker Build (Windows)
+
+### Prerequisites
+1. **Install NVIDIA GPU Drivers**: Latest drivers for GTX 1650
+2. **Install Docker Desktop**: https://www.docker.com/products/docker-desktop
+3. **Enable NVIDIA Container Toolkit**:
+   ```bash
+   # Download and install NVIDIA Docker
+   # https://github.com/NVIDIA/nvidia-docker
+   ```
 
 ### 1. Clone the repository
 ```bash
@@ -26,33 +38,48 @@ git clone https://github.com/thienv29/swapface-tool.git
 cd swapface-tool
 ```
 
-### 2. Create and activate virtual environment
+### 2. Build Docker Image
 ```bash
-# Tạo virtual environment
-python3 -m venv venv
-
-# Activate trên macOS/Linux
-source venv/bin/activate
-
-# Activate trên Windows
-# venv\Scripts\activate
+# Double-click build.bat OR run manually:
+docker build -t swapface-gtx1650 .
 ```
 
-### 3. Install dependencies
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-### 4. Verify model presence
+### 3. Verify model presence
 The face swapping model (`models/inswapper_128.onnx`) is already included in the repository.
 
-## Usage
+## Usage with Docker
 
-### 1. Run the API server
-
+### 1. Build the Docker Image
 ```bash
-python app.py
+# Use the provided build script
+build.bat
+
+# OR build manually
+docker build -t swapface-gtx1650 .
+```
+
+### 2. Run the Container
+```bash
+# Use the provided run script (recommended)
+run.bat
+
+# OR run manually
+docker run --gpus all --name swapface-gtx1650-app -p 8000:8000 \
+  -v "%CD%/output:/app/output" \
+  -v "%CD%/models:/app/models" \
+  -v "%CD%/static:/app/static" \
+  -v "%CD%/templates:/app/templates" \
+  -e CUDA_VISIBLE_DEVICES=0 \
+  swapface-gtx1650
+```
+
+### 3. Alternative: Use Docker Compose
+```bash
+# Build and run
+docker-compose up --build
+
+# Run in background
+docker-compose up -d --build
 ```
 
 The server will start on `http://localhost:8000` by default.

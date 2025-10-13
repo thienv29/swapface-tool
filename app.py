@@ -7,17 +7,17 @@ from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
 import tempfile
 
-# M1 tối ưu
-os.environ["OMP_NUM_THREADS"] = "8"  # Điều chỉnh theo core M1
-os.environ["MKL_NUM_THREADS"] = "8"
-os.environ["CUDA_VISIBLE_DEVICES"] = "" # Disable CUDA để chỉ dùng CPU Neural engine M1
+# Windows GTX 1650 GPU optimization
+os.environ["OMP_NUM_THREADS"] = "4"  # GTX 1650 có 4GB VRAM, limit threads
+os.environ["MKL_NUM_THREADS"] = "4"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Enable CUDA for GTX 1650
 
 app = Flask(__name__, template_folder="templates")
 os.makedirs("output", exist_ok=True)
 
-print("🚀 Loading face detection and swap models with M1 optimizations...")
+print("🚀 Loading face detection and swap models with GTX 1650 GPU optimizations...")
 face_app = FaceAnalysis(name="buffalo_l")
-face_app.prepare(ctx_id=-1, det_size=(640, 640))  # CPU cho M1
+face_app.prepare(ctx_id=0, det_size=(640, 640))  # GPU for GTX 1650
 swapper = get_model("models/inswapper_128.onnx", download=False)
 print("✅ Models loaded successfully!")
 
@@ -141,8 +141,8 @@ import os
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from multiprocessing import cpu_count
 
-# Số workers tối đa cho processing parallel M1 (8-core, but allow hypter threading)
-MAX_WORKERS = min(16, cpu_count() * 2)
+# Số workers tối đa cho processing parallel GTX 1650 (4GB VRAM optimization)
+MAX_WORKERS = min(8, cpu_count())  # Limit workers cho GTX 1650
 
 def process_single_target_cached(source_face_cached, target_file, target_filename, source_shape):
     """Process a single target file (image or video) with cached source_face"""

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  swapface-gtx1650:
+    build: .
+    image: swapface-gtx1650
+    container_name: swapface-gtx1650-app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./models:/app/models
+      - ./static:/app/static
+      - ./templates:/app/templates
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
