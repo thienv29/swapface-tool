@@ -47,43 +47,72 @@ function handleMultipleFilesSelect(input, preview) {
   const filesToPreview = files.slice(0, maxPreviewFiles);
   const remainingCount = files.length - maxPreviewFiles;
 
+  let loadedCount = 0;
+  let fileContents = new Array(filesToPreview.length);
+
   filesToPreview.forEach((file, index) => {
     const reader = new FileReader();
     reader.onload = function(e) {
       const isVideo = file.type.startsWith('video/');
       const isImage = file.type.startsWith('image/');
 
-      previewContent += `
-          <div class="file-item">
-            ${isVideo ?
-              `<video src="${e.target.result}" class="preview-image"></video>` :
-              `<img src="${e.target.result}" alt="${file.name}" class="preview-image">`
-            }
-            <div class="file-info">
-              <button class="remove-single-file" onclick="removeSingleFile('${input.id}', '${file.name}')">
-                <i class="fas fa-times"></i>
-              </button>
-              <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon"></i>
-              <span class="file-name">${file.name}</span>
-            </div>
+      fileContents[index] = `
+        <div class="file-item">
+          ${isVideo ?
+            `<video src="${e.target.result}" class="preview-image"></video>` :
+            `<img src="${e.target.result}" alt="${file.name}" class="preview-image">`
+          }
+          <div class="file-info">
+            <button class="remove-single-file" onclick="removeSingleFile('${input.id}', '${file.name}')">
+              <i class="fas fa-times"></i>
+            </button>
+            <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon"></i>
+            <span class="file-name">${file.name}</span>
           </div>
-        `;
+        </div>`;
 
-      // Add "and X more..." if there are remaining files
-      if (remainingCount > 0 && index === filesToPreview.length - 1) {
-        previewContent += `
-          <div class="file-item more-files">
-            <div class="more-files-content">
-              <i class="fas fa-plus-circle"></i>
-              <span>${remainingCount} more files</span>
-            </div>
-          </div>
-        `;
+      loadedCount++;
+      if (loadedCount === filesToPreview.length) {
+        // All files loaded, now generate final preview content
+        let finalContent = previewContent;
+        fileContents.forEach(content => {
+          finalContent += content;
+        });
+
+        // Add "and X more..." if there are remaining files
+        if (remainingCount > 0) {
+          finalContent += `
+            <div class="file-item more-files">
+              <div class="more-files-content">
+                <i class="fas fa-plus-circle"></i>
+                <span>${remainingCount} more files</span>
+              </div>
+            </div>`;
+        }
+
+        preview.innerHTML = finalContent;
+        preview.style.display = 'block';
+        updateSwapButton();
       }
-
-      // Show preview after all files are loaded
-      if (index === filesToPreview.length - 1) {
-        preview.innerHTML = previewContent;
+    };
+    reader.onerror = function(e) {
+      console.error(`Error loading file ${file.name}:`, e);
+      loadedCount++;
+      if (loadedCount === filesToPreview.length) {
+        let finalContent = previewContent;
+        fileContents.forEach(content => {
+          if (content) finalContent += content;
+        });
+        if (remainingCount > 0) {
+          finalContent += `
+            <div class="file-item more-files">
+              <div class="more-files-content">
+                <i class="fas fa-plus-circle"></i>
+                <span>${remainingCount} more files</span>
+              </div>
+            </div>`;
+        }
+        preview.innerHTML = finalContent;
         preview.style.display = 'block';
         updateSwapButton();
       }

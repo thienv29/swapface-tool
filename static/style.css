@@ -170,7 +170,7 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1rem;
-  max-height: 300px;
+  max-height: 600px;
   overflow-y: auto;
   padding-right: 0.5rem;
 }
@@ -304,21 +304,23 @@ body {
 
 .remove-file {
   position: absolute;
-  top: -0.25rem;
-  right: -0.25rem;
+  top: 0.5rem;
+  right: 0.5rem;
   background: var(--error);
   color: white;
   border: none;
   border-radius: 50%;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.75rem;
+  height: 1.75rem;
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
   transition: all 0.2s ease;
+  z-index: 30;
+  outline: none;
 }
 
 .remove-file:hover {
