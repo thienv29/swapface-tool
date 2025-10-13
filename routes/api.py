@@ -32,7 +32,7 @@ face_services.initialize()
 api_bp = Blueprint('api', __name__)
 
 
-def _extract_file_list(files) -> tuple[List, List[str]]:
+def _extract_file_list(files):
     """Extract uploaded files and their filenames."""
     target_files = []
     target_filenames = []
@@ -46,7 +46,7 @@ def _extract_file_list(files) -> tuple[List, List[str]]:
     return target_files, target_filenames
 
 
-def _validate_request(src_file, tgt_files) -> tuple[bool, str]:
+def _validate_request(src_file, tgt_files):
     """Validate incoming request."""
     if not src_file or not src_file.filename:
         return False, "Missing source file"
