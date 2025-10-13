@@ -214,6 +214,17 @@ function handleDrop(e, inputId) {
   }
 }
 
+// Prevent default drag/drop behavior on the entire document
+document.addEventListener('dragover', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
+document.addEventListener('drop', function(e) {
+  e.preventDefault();
+  e.stopPropagation();
+});
+
 // Event listeners
 document.getElementById('sourceInput').addEventListener('change', function(e) {
   const preview = document.getElementById('sourcePreview');
@@ -373,20 +384,13 @@ form.addEventListener("submit", async (e) => {
             progressFill.style.width = percentage + '%';
             progressText.textContent = `Processing: ${statusData.completed}/${statusData.total} (${Math.round(percentage)}%)`;
 
-            // Update current file and video progress if processing video
-            if (statusData.current_file) {
-              let currentFileText = `Current: ${statusData.current_file}`;
+              // Update current file and show individual progress
+              updateIndividualFileProgress(statusData);
 
-              // Add video progress if it's a video file and has video progress data
-              if (statusData.current_file.toLowerCase().match(/\.(mp4|avi|mov|mkv)$/)) {
-                if (statusData.video_progress_percentage > 0) {
-                  const videoPercent = Math.round(statusData.video_progress_percentage);
-                  currentFileText += ` (${videoPercent}% of frames)`;
-                }
+              if (statusData.current_file) {
+                let currentFileText = `Current: ${statusData.current_file}`;
+                currentFileDiv.textContent = currentFileText;
               }
-
-              currentFileDiv.textContent = currentFileText;
-            }
 
             // Update speed and ETA
             if (statusData.speed > 0) {
@@ -462,78 +466,74 @@ form.addEventListener("submit", async (e) => {
 
   function showResults(results) {
     if (results && results.length > 0) {
-      const successResults = results.filter(r => r.result);
-      const errorResults = results.filter(r => r.error);
-
-      if (successResults.length > 0) {
-        resultDiv.innerHTML = `
-          <div class="result-container">
-            <div class="result-success">
-              <h3><i class="fas fa-check-circle"></i> Batch Swap Thành Công!</h3>
-              <p>${successResults.length}/${results.length} files được xử lý thành công</p>
-            </div>
-                <div class="files-preview results-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 2rem;">${
-                  successResults.map((result, index) => `
-                    <div class="file-item">
-                      ${result.type === 'video' ?
-                        `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
-                        `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
-                      <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
-                        <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                          <i class="fas fa-file-${result.type === 'image' ? 'image' : 'video'} file-icon"></i>
-                          <span class="file-name">${result.original_name}</span>
-                        </div>
-                        <div style="display: flex; gap: 0.5rem; justify-content: center;">
-                          <button class="download-btn" onclick="downloadFile('${result.result}', '${result.original_name}')" style="background: var(--success); color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem;">
-                            <i class="fas fa-download"></i> Tải về
-                          </button>
-                        </div>
+      resultDiv.innerHTML = `
+        <div class="result-container">
+          <div class="result-success">
+            <h3><i class="fas fa-check-circle"></i> Batch Swap Thành Công!</h3>
+            <p>${results.length} files được xử lý</p>
+          </div>
+          <div class="files-preview results-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 2rem;">
+            ${results.map((result, index) => {
+              if (result.result) {
+                // Success result - show the completed file
+                return `
+                  <div class="file-item">
+                    ${result.type === 'video' ?
+                      `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
+                      `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
+                    <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                      <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                        <i class="fas fa-file-${result.type === 'image' ? 'image' : 'video'} file-icon"></i>
+                        <span class="file-name">${result.original_name}</span>
+                      </div>
+                      <div style="display: flex; gap: 0.5rem; justify-content: center;">
+                        <button class="download-btn" onclick="downloadFile('${result.result}', '${result.original_name}')" style="background: var(--success); color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem;">
+                          <i class="fas fa-download"></i> Tải về
+                        </button>
                       </div>
                     </div>
-                  `).join('')
-                }</div>
-
-                <!-- Modal for full image view -->
-                <div id="imageModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;" onclick="closeModal()">
-                  <div style="background: white; padding: 2rem; border-radius: 1rem; max-width: 90%; max-height: 90%; position: relative; overflow: hidden;" onclick="event.stopPropagation()">
-                    <button onclick="closeModal()" style="position: absolute; top: 1rem; right: 1rem; background: var(--error); color: white; border: none; border-radius: 50%; width: 3rem; height: 3rem; font-size: 1.5rem; cursor: pointer;">×</button>
-                    <img id="modalImage" src="" alt="" style="max-width: 100%; max-height: 100%; object-fit: contain;">
-                    <p id="modalCaption" style="text-align: center; margin-top: 1rem; font-weight: 500;"></p>
                   </div>
-                </div>
+                `;
+              } else {
+                // Error result - show error state
+                return `
+                  <div class="file-item error-item">
+                    <div class="error-placeholder" style="width: 100%; height: 350px; background: #fee; border: 2px dashed #fcc; border-radius: 0.75rem; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #c33;">
+                      <i class="fas fa-exclamation-triangle" style="font-size: 3rem; margin-bottom: 1rem;"></i>
+                      <span style="font-weight: 500;">Xử lý thất bại</span>
+                    </div>
+                    <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
+                      <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
+                        <i class="fas fa-file file-icon" style="color: #c33;"></i>
+                        <span class="file-name">${result.original_name || 'Unknown'}</span>
+                      </div>
+                      <div style="text-align: center; color: #c33; font-size: 0.8rem;">
+                        ${result.error_message || 'Unknown error'}
+                      </div>
+                    </div>
+                  </div>
+                `;
+              }
+            }).join('')}
           </div>
-        `;
 
-        if (errorResults.length > 0) {
-          resultDiv.innerHTML += `
-            <div class="result-container" style="margin-top: 2rem;">
-              <div class="error-message">
-                <h3><i class="fas fa-exclamation-triangle"></i> Một số files thất bại</h3>
-                <ul style="text-align: left; margin-top: 1rem;">
-                  ${errorResults.map(result => `<li>${result.original_name || 'Unknown'}: ${result.error}</li>`).join('')}
-                </ul>
-              </div>
-            </div>
-          `;
-        }
-      } else {
-        resultDiv.innerHTML = `
-          <div class="result-container">
-            <div class="error-message">
-              <h3><i class="fas fa-times-circle"></i> Tất cả files thất bại</h3>
-              <ul style="text-align: left; margin-top: 1rem;">
-                ${errorResults.map(result => `<li>${result.original_name || 'Unknown'}: ${result.error}</li>`).join('')}
-              </ul>
+          <!-- Modal for full image view -->
+          <div id="imageModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;" onclick="closeModal()">
+            <div style="background: white; padding: 2rem; border-radius: 1rem; max-width: 90%; max-height: 90%; position: relative; overflow: hidden;" onclick="event.stopPropagation()">
+              <button onclick="closeModal()" style="position: absolute; top: 1rem; right: 1rem; background: var(--error); color: white; border: none; border-radius: 50%; width: 3rem; height: 3rem; font-size: 1.5rem; cursor: pointer;">&times;</button>
+              <img id="modalImage" src="" alt="" style="max-width: 100%; max-height: 100%; object-fit: contain;">
+              <p id="modalCaption" style="text-align: center; margin-top: 1rem; font-weight: 500;"></p>
             </div>
           </div>
-        `;
-      }
+        </div>
+      `;
+
     } else {
       resultDiv.innerHTML = `
         <div class="result-container">
           <div class="error-message">
             <h3><i class="fas fa-exclamation-triangle"></i> Có Lỗi Xảy Ra</h3>
-            <p>Vui lòng thử lại sau</p>
+            <p>Không có kết quả để hiển thị</p>
           </div>
         </div>
       `;
@@ -556,3 +556,82 @@ form.addEventListener("submit", async (e) => {
     }
   }
 });
+
+function updateIndividualFileProgress(statusData) {
+  // Create or update file progress display
+  let progressContainer = document.getElementById('fileProgressContainer');
+  if (!progressContainer) {
+    progressContainer = document.createElement('div');
+    progressContainer.id = 'fileProgressContainer';
+    progressContainer.style.cssText = `
+      margin-top: 1rem;
+      padding: 1rem;
+      background: white;
+      border-radius: 0.75rem;
+      border: 1px solid #e5e5e5;
+      max-height: 300px;
+      overflow-y: auto;
+    `;
+
+    const progressDiv = document.getElementById('progress');
+    progressDiv.appendChild(progressContainer);
+
+    const title = document.createElement('h4');
+    title.textContent = 'Chi Tiết Tiến Độ File';
+    title.style.cssText = 'margin: 0 0 1rem 0; font-size: 1rem; color: #333;';
+    progressContainer.appendChild(title);
+  }
+
+  // Clear existing content except title
+  const title = progressContainer.querySelector('h4');
+  progressContainer.innerHTML = '';
+  progressContainer.appendChild(title);
+
+  // Add file progress items
+  if (statusData.file_progress && Object.keys(statusData.file_progress).length > 0) {
+    Object.entries(statusData.file_progress).forEach(([filename, progress]) => {
+      const itemDiv = document.createElement('div');
+      itemDiv.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem;
+        margin-bottom: 0.5rem;
+        border-radius: 0.5rem;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+      `;
+
+      const fileNameDiv = document.createElement('div');
+      fileNameDiv.style.cssText = 'font-weight: 500; font-size: 0.9rem; color: #333; flex: 1; margin-right: 1rem;';
+      fileNameDiv.textContent = filename;
+
+      const progressDiv = document.createElement('div');
+      progressDiv.style.cssText = `
+        font-size: 0.85rem;
+        color: ${progress.status === 'completed' ? '#28a745' : progress.status === 'error' ? '#dc3545' : '#007bff'};
+        font-weight: 500;
+      `;
+
+      // Format the progress text specially for video
+      let displayText = progress.progress_text;
+      if (progress.file_type === 'video' && progress.current_frame !== null && progress.total_frames !== null) {
+        const percentage = progress.progress_percentage.toFixed(1);
+        displayText = `${percentage}% (${progress.current_frame}/${progress.total_frames} frames)`;
+      } else if (progress.file_type === 'image') {
+        displayText = progress.progress_text || 'Processing...';
+      }
+
+      progressDiv.textContent = displayText;
+
+      itemDiv.appendChild(fileNameDiv);
+      itemDiv.appendChild(progressDiv);
+      progressContainer.appendChild(itemDiv);
+    });
+  } else {
+    const emptyDiv = document.createElement('div');
+    emptyDiv.style.cssText = 'text-align: center; color: #666; padding: 1rem; font-style: italic;';
+    emptyDiv.textContent = 'Không có thông tin tiến độ file';
+    progressContainer.appendChild(emptyDiv);
+  }
+}
