@@ -31,13 +31,80 @@ class VideoProcessor:
         return fps, frame_width, frame_height, total_frames
 
     def create_video_writer(self, output_path: str, fps: int, width: int, height: int) -> cv2.VideoWriter:
-        """Create video writer with appropriate codec."""
-        try:
-            fourcc = cv2.VideoWriter_fourcc(*'avc1')  # H.264
-        except:
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Fallback
+        """Create video writer with appropriate codec (fallback strategy)."""
+        # Try multiple codecs in order of preference
+        codecs_to_try = [
+            ('avc1', 'H.264'),
+            ('mp4v', 'MPEG-4'),
+            ('xvid', 'XVID'),
+            ('X264', 'H.264 alternative'),
+            ('MJPG', 'Motion JPEG'),
+            ('DIVX', 'DIVX'),
+            ('WMV1', 'Windows Media Video'),
+            ('WMV2', 'Windows Media Video 2')
+        ]
 
-        return cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        last_error = None
+        working_writer = None
+
+        for fourcc_code, codec_name in codecs_to_try:
+            try:
+                fourcc = cv2.VideoWriter_fourcc(*fourcc_code)
+                # Use .avi extension for better codec support
+                test_path = output_path.replace('.mp4', '.avi')
+
+                writer = cv2.VideoWriter(test_path, fourcc, fps, (width, height))
+
+                # Test if writer opened successfully by writing a test frame
+                if writer.isOpened():
+                    # Create a test frame and write it
+                    test_frame = np.zeros((height, width, 3), dtype=np.uint8)
+                    writer.write(test_frame)
+
+                    # Try to release and reopen to test persistence
+                    writer.release()
+                    writer = cv2.VideoWriter(test_path, fourcc, fps, (width, height))
+
+                    if writer.isOpened():
+                        logger.info(f"Successfully created video writer with codec: {codec_name} ({fourcc_code})")
+                        # Clean up test file
+                        if os.path.exists(test_path):
+                            os.remove(test_path)
+
+                        # Recreate writer for actual output path
+                        actual_writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+                        if actual_writer.isOpened():
+                            return actual_writer
+                        else:
+                            actual_writer.release()
+
+                    # Clean up if not successful
+                    writer.release()
+                    if os.path.exists(test_path):
+                        os.remove(test_path)
+
+                last_error = f"Codec {codec_name} ({fourcc_code}) not available"
+
+            except Exception as e:
+                last_error = f"Error with codec {codec_name} ({fourcc_code}): {str(e)}"
+                logger.debug(f"Codec {codec_name} failed: {e}")
+                continue
+
+        # Final fallback: try to create with no codec specified (let OpenCV choose)
+        try:
+            logger.warning("Trying fallback video writer without codec specification")
+            writer = cv2.VideoWriter(output_path, -1, fps, (width, height))
+            if writer.isOpened():
+                logger.info("Fallback video writer created successfully")
+                return writer
+            writer.release()
+        except Exception as e:
+            logger.error(f"Fallback video writer also failed: {e}")
+
+        # If all attempts fail, raise error with detailed diagnostics
+        raise RuntimeError(f"All video codecs failed. Last error: {last_error}. "
+                          f"Available codecs may be limited on this system. "
+                          f"Consider installing additional video codecs or ffmpeg.")
 
     def process_video_batch(
         self,
