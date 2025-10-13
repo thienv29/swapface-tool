@@ -170,6 +170,27 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.files-preview::-webkit-scrollbar {
+  width: 6px;
+}
+
+.files-preview::-webkit-scrollbar-track {
+  background: var(--gray-100);
+  border-radius: 3px;
+}
+
+.files-preview::-webkit-scrollbar-thumb {
+  background: var(--gray-400);
+  border-radius: 3px;
+}
+
+.files-preview::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-500);
 }
 
 .file-item {
@@ -183,6 +204,45 @@ body {
 
 .file-item:hover {
   transform: translateY(-2px);
+}
+
+.file-count-indicator {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  background: var(--primary);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  z-index: 10;
+}
+
+.more-files {
+  background: var(--gray-100);
+  border: 2px dashed var(--gray-300);
+}
+
+.more-files-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  height: 100%;
+  text-align: center;
+  gap: 0.5rem;
+  color: var(--gray-500);
+}
+
+.more-files-content i {
+  font-size: 2rem;
+}
+
+.more-files-content span {
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .file-preview img,
@@ -201,11 +261,13 @@ body {
     }
 
     .results-grid img,
-    .results-grid video {
+    .results-grid video,
+    .results-grid img {
       width: 100%;
       height: 300px;
       object-fit: cover;
       border-radius: 0.75rem;
+      cursor: pointer;
     }
 
 .file-info {
@@ -261,6 +323,31 @@ body {
 
 .remove-file:hover {
   transform: scale(1.1);
+}
+
+.remove-single-file {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: var(--error);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 1.5rem;
+  height: 1.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--shadow);
+  transition: all 0.2s ease;
+  z-index: 20;
+}
+
+.remove-single-file:hover {
+  transform: scale(1.1);
+  background: #dc2626;
 }
 
 .action-section {
@@ -435,5 +522,22 @@ body {
   .swap-button {
     padding: 0.875rem 2rem;
     font-size: 1rem;
+  }
+
+  .files-preview {
+    max-height: 200px;
+  }
+
+  .file-count-indicator {
+    font-size: 0.7rem;
+    padding: 0.2rem 0.5rem;
+  }
+
+  .more-files-content {
+    padding: 1rem 0.5rem;
+  }
+
+  .more-files-content span {
+    font-size: 0.8rem;
   }
 }

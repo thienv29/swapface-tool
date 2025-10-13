@@ -37,11 +37,17 @@ function handleMultipleFilesSelect(input, preview) {
   const files = Array.from(input.files);
   if (files.length === 0) return;
 
-  let previewContent = `<button class="remove-file" onclick="removeFile('${input.id}')">
-    <i class="fas fa-times"></i>
-  </button>`;
+  let previewContent = `<div class="file-count-indicator">${files.length} files selected</div>
+    <button class="remove-file" onclick="removeFile('${input.id}')">
+      <i class="fas fa-times"></i>
+    </button>`;
 
-  files.forEach((file, index) => {
+  // Only show first few file previews to prevent UI overflow
+  const maxPreviewFiles = 5;
+  const filesToPreview = files.slice(0, maxPreviewFiles);
+  const remainingCount = files.length - maxPreviewFiles;
+
+  filesToPreview.forEach((file, index) => {
     const reader = new FileReader();
     reader.onload = function(e) {
       const isVideo = file.type.startsWith('video/');
@@ -63,8 +69,20 @@ function handleMultipleFilesSelect(input, preview) {
           </div>
         `;
 
+      // Add "and X more..." if there are remaining files
+      if (remainingCount > 0 && index === filesToPreview.length - 1) {
+        previewContent += `
+          <div class="file-item more-files">
+            <div class="more-files-content">
+              <i class="fas fa-plus-circle"></i>
+              <span>${remainingCount} more files</span>
+            </div>
+          </div>
+        `;
+      }
+
       // Show preview after all files are loaded
-      if (index === files.length - 1) {
+      if (index === filesToPreview.length - 1) {
         preview.innerHTML = previewContent;
         preview.style.display = 'block';
         updateSwapButton();
@@ -198,6 +216,37 @@ function showFullImage(imageSrc, caption) {
   modal.style.display = 'flex';
 }
 
+function showFullVideo(videoSrc, caption) {
+  const modal = document.getElementById('imageModal');
+  const modalImage = document.getElementById('modalImage');
+  const modalCaption = document.getElementById('modalCaption');
+
+  // Create video element if not exists
+  if (modal.querySelector('video')) {
+    modal.querySelector('video').remove();
+  }
+
+  const video = document.createElement('video');
+  video.src = videoSrc;
+  video.controls = true;
+  video.style.maxWidth = '100%';
+  video.style.maxHeight = '100%';
+  video.style.objectFit = 'contain';
+
+  // Replace image with video in modal
+  modalImage.parentNode.replaceChild(video, modalImage);
+  modalCaption.textContent = caption;
+  modal.style.display = 'flex';
+
+  // Restore image element when modal closes
+  const originalCloseHandler = closeModal;
+  closeModal = function() {
+    modal.style.display = 'none';
+    video.parentNode.replaceChild(modalImage, video);
+    closeModal = originalCloseHandler;
+  };
+}
+
 function closeModal() {
   const modal = document.getElementById('imageModal');
   modal.style.display = 'none';
@@ -233,7 +282,10 @@ function removeSingleFile(inputId, filename) {
   });
   input.files = dt.files;
 
-  // Re-trigger preview update
+  // Update button text with new count and preview immediately (no delay)
+  updateSwapButton();
+
+  // Re-trigger preview update immediately - this will regenerate the entire preview
   const changeEvent = new Event('change', { bubbles: true });
   input.dispatchEvent(changeEvent);
 }
@@ -394,7 +446,9 @@ form.addEventListener("submit", async (e) => {
                 <div class="files-preview results-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 2rem;">${
                   successResults.map((result, index) => `
                     <div class="file-item">
-                      <img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">
+                      ${result.type === 'video' ?
+                        `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
+                        `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
                       <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
                         <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
                           <i class="fas fa-file-${result.type === 'image' ? 'image' : 'video'} file-icon"></i>
