@@ -1,5 +1,5 @@
 # Use NVIDIA CUDA base image for GTX 1650 support
-FROM nvidia/cuda:11.8-devel-ubuntu20.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu20.04
 
 # Set environment variables for non-interactive installation
 ENV DEBIAN_FRONTEND=noninteractive
