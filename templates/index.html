@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,13 +11,13 @@
   <div class="container">
     <header class="header">
       <h1>Face Swap Tool</h1>
-      <p>Đổi khuôn mặt thông minh với công nghệ AI tiên tiến. Hỗ trợ ảnh và video!</p>
+      <p>Smart face swapping powered by advanced AI. Supports images and videos!</p>
     </header>
 
     <div class="app-card">
       <div class="app-header">
-        <h2>🚀 Công Cụ Đổi Khuôn Mặt</h2>
-        <p>Zipped version optimized cho M1 chip</p>
+        <h2>🚀 Face Swap Tool</h2>
+        <p>Optimized for Apple Silicon M1/M2 Chip</p>
       </div>
 
       <div class="app-content">
@@ -29,24 +29,24 @@
                 <div class="upload-icon">
                   <i class="fas fa-user-plus"></i>
                 </div>
-                <div class="upload-text">Ảnh Source</div>
-                <div class="upload-hint">Chọn mặt muốn dán vào</div>
+                <div class="upload-text">Source Image</div>
+                <div class="upload-hint">Choose the face to paste</div>
                 <div class="upload-hint">Support: JPG, PNG, WebP</div>
               </label>
               <div class="file-preview" id="sourcePreview" style="display: none;"></div>
             </div>
 
             <div class="upload-container" id="targetsContainer">
-              <input type="file" name="targets" id="targetsInput" class="file-input" required multiple accept="image/*,video/*" ondrop="dropHandler(event)" ondragover="dragOverHandler(event)" ondragleave="dragLeaveHandler(event)">
+              <input type="file" name="targets" id="targetsInput" class="file-input" required multiple accept="image/*,video/*">
               <label for="targetsInput" class="upload-label">
                 <div class="upload-icon">
                   <i class="fas fa-images"></i>
                 </div>
                 <div class="upload-text">Target Files</div>
-                <div class="upload-hint">Chọn nhiều file để swap cùng lúc</div>
-                <div class="upload-hint">Ảnh: JPG, PNG, WebP</div>
-                <div class="upload-hint">Video: MP4, AVI, MOV</div>
-                <div class="upload-hint">Kéo thả files vào đây!</div>
+                <div class="upload-hint">Select multiple files to swap at once</div>
+                <div class="upload-hint">Images: JPG, PNG, WebP</div>
+                <div class="upload-hint">Videos: MP4, AVI, MOV</div>
+                <div class="upload-hint">Drag & drop files here!</div>
               </label>
               <div class="files-preview" id="targetsPreview" style="display: none;"></div>
             </div>
@@ -55,7 +55,7 @@
           <div class="action-section">
             <button type="submit" class="swap-button" id="swapButton">
               <i class="fas fa-magic"></i>
-              Swap Ngay!
+              Swap Now!
             </button>
           </div>
         </form>
@@ -66,7 +66,7 @@
           <div class="progress-bar">
             <div class="progress-fill" id="progressFill"></div>
           </div>
-          <div class="progress-text" id="progressText">Đang xử lý...</div>
+          <div class="progress-text" id="progressText">Processing...</div>
         </div>
       </div>
     </div>

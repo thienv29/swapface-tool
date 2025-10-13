@@ -24,69 +24,69 @@ print("✅ Models loaded successfully!")
 def detect_faces(img):
     faces = face_app.get(img)
     if not faces:
-        print("⚠️ Không phát hiện khuôn mặt nào trong ảnh.")
+        print("⚠️ No face detected in image.")
     return faces
 
 def swap_face(source_img, target_img):
     source_faces = detect_faces(source_img)
     target_faces = detect_faces(target_img)
     if not source_faces or not target_faces:
-        print("❌ Không tìm thấy khuôn mặt để swap.")
+        print("❌ No faces found for swapping.")
         return target_img
 
     source_face = source_faces[0]
     target_face = target_faces[0]
 
     try:
-        # Tối ưu: loại bỏ scaling cho tốc độ, chỉ swap trực tiếp
+        # Optimized: direct swap without scaling for speed
         swapped = swapper.get(target_img, target_face, source_face, paste_back=True)
 
         return swapped
 
     except Exception as e:
-        print(f"⚠️ Swap lỗi: {e}")
+        print(f"⚠️ Swap error: {e}")
         return target_img
 
 def swap_face_cached(source_face_cached, target_img):
-    """Swap face với source_face đã cache (tối ưu CPU)"""
+    """Swap face with cached source_face (CPU optimization)"""
     target_faces = detect_faces(target_img)
     if not target_faces:
-        print("❌ Không tìm thấy khuôn mặt target để swap.")
+        print("❌ No target face found for swapping.")
         return target_img
 
     target_face = target_faces[0]
 
     try:
-        # Tối ưu: swap trực tiếp, không scaling không detect lại source
+        # Optimized: direct swap without scaling without re-detecting source
         swapped = swapper.get(target_img, target_face, source_face_cached, paste_back=True)
 
         return swapped
 
     except Exception as e:
-        print(f"⚠️ Swap lỗi: {e}")
+        print(f"⚠️ Swap error: {e}")
         return target_img
 
 def swap_video_cached(source_face_cached, video_path, output_path, source_img_fake):
-    """Swap face trong video với parallel processing cho frames"""
+    """Swap face in video with parallel frame processing"""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print("❌ Không thể mở video")
+        print("❌ Cannot open video")
         return False
 
-    # Lấy thông tin video
+    # Get video info
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Khởi tạo video writer
+    # Initialize video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
     frames = []
     frame_count = 0
-    batch_size = 8  # Xử lý 8 frames cùng lúc trên M1
+    batch_size = 8  # Process 8 frames at once on M1
 
-    print(f"🎬 Đang xử lý video với parallel frames: total frames ~{int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}")
+    print(f"🎬 Processing video with parallel frames: total frames ~{int(cap.get(cv2.CAP_PROP_FRAME_COUNT))}")
 
     while True:
         ret, frame = cap.read()
@@ -96,27 +96,27 @@ def swap_video_cached(source_face_cached, video_path, output_path, source_img_fa
         frames.append(frame)
         frame_count += 1
 
-        # Xử lý batch frames khi đủ số lượng hoặc cuối video
+        # Process batch frames when enough or at end of video
         if len(frames) >= batch_size or frame_count % batch_size == 0:
             print(f"🎬 Processing batch: {len(frames)} frames")
 
-            # Parallel processing các frames trong batch
+            # Parallel processing frames in batch
             swapped_batch = []
             for frame in frames:
                 try:
                     swapped_frame = swap_face_cached(source_face_cached, frame)
                     swapped_batch.append(swapped_frame)
                 except Exception as e:
-                    print(f"⚠️ Lỗi frame trong batch: {e}")
+                    print(f"⚠️ Batch frame error: {e}")
                     swapped_batch.append(frame)
 
-            # Viết batch ra video
+            # Write batch to video
             for swapped_frame in swapped_batch:
                 out.write(swapped_frame)
 
             frames = []  # Reset batch
 
-    # Xử lý frames còn lại
+    # Process remaining frames
     if frames:
         print(f"🎬 Processing remaining {len(frames)} frames")
         for frame in frames:
@@ -124,12 +124,12 @@ def swap_video_cached(source_face_cached, video_path, output_path, source_img_fa
                 swapped_frame = swap_face_cached(source_face_cached, frame)
                 out.write(swapped_frame)
             except Exception as e:
-                print(f"⚠️ Lỗi frame cuối: {e}")
+                print(f"⚠️ Final frame error: {e}")
                 out.write(frame)
 
     cap.release()
     out.release()
-    print(f"✅ Video hoàn thành: {output_path}")
+    print(f"✅ Video completed: {output_path}")
     return True
 
 @app.route("/")
@@ -145,19 +145,19 @@ from multiprocessing import cpu_count
 MAX_WORKERS = min(16, cpu_count() * 2)
 
 def process_single_target_cached(source_face_cached, target_file, target_filename, source_shape):
-    """Xử lý một target file (image hoặc video) với source_face cached"""
+    """Process a single target file (image or video) with cached source_face"""
     target_uuid = str(uuid.uuid4())
     tgt_path = f"/tmp/{target_uuid}_{target_filename}"
     try:
         target_file.save(tgt_path)
     except Exception as e:
-        print(f"❌ Lỗi lưu file tạm: {e}")
-        return {"error": f"Không thể lưu file: {target_filename}"}
+        print(f"❌ Temp file save error: {e}")
+        return {"error": f"Cannot save file: {target_filename}"}
 
     # Check if image
     target_img = cv2.imread(tgt_path)
     if target_img is not None:
-        # Process image với source_face cached
+        # Process image with cached source_face
         print(f"📷 Processing image: {target_filename}")
         result_img = swap_face_cached(source_face_cached, target_img)
         out_path = f"output/{target_uuid}.jpg"
@@ -168,14 +168,14 @@ def process_single_target_cached(source_face_cached, target_file, target_filenam
         if target_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
             print(f"🎬 Processing video: {target_filename}")
             out_path = f"output/{target_uuid}.mp4"
-            # Tạo source_img giả từ shape để video processing
+            # Create fake source_img for video processing
             source_img_fake = np.zeros(source_shape, dtype=np.uint8)
             if swap_video_cached(source_face_cached, tgt_path, out_path, source_img_fake):
                 return {"result": f"/view/{out_path}", "type": "video", "original_name": target_filename}
             else:
-                return {"error": f"Không thể xử lý video: {target_filename}"}
+                return {"error": f"Cannot process video: {target_filename}"}
         else:
-            return {"error": f"File không hỗ trợ: {target_filename}"}
+            return {"error": f"Unsupported file: {target_filename}"}
 
 @app.route("/swapface", methods=["POST"])
 def swapface_api():
@@ -183,7 +183,7 @@ def swapface_api():
     tgt_files = request.files.getlist("targets")  # Get multiple targets
 
     if not src_file or not tgt_files:
-        return jsonify({"error": "Thiếu file source hoặc targets"}), 400
+        return jsonify({"error": "Missing source file or targets"}), 400
 
     # Save source file
     src_uuid = str(uuid.uuid4())
@@ -192,12 +192,12 @@ def swapface_api():
 
     source_img = cv2.imread(src_path)
     if source_img is None:
-        return jsonify({"error": "Không đọc được ảnh source"}), 400
+        return jsonify({"error": "Cannot read source image"}), 400
 
-    # Cache source faces để tái sử dụng (tối ưu CPU)
+    # Cache source faces to reuse (CPU optimization)
     source_faces_cached = detect_faces(source_img)
     if not source_faces_cached:
-        return jsonify({"error": "Không phát hiện khuôn mặt source"}), 400
+        return jsonify({"error": "No source face detected"}), 400
 
     print(f"🚀 Starting batch processing for {len(tgt_files)} targets")
 
@@ -219,7 +219,7 @@ def swapface_api():
                 print(f"✅ Completed: {result.get('original_name', 'Unknown')}")
             except Exception as e:
                 print(f"❌ Error processing file: {e}")
-                results.append({"error": f"Lỗi xử lý: {e}"})
+                results.append({"error": f"Processing error: {e}"})
 
     # Clean up temp source file
     try:
