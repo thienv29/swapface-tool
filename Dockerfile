@@ -1,6 +1,10 @@
 # Use NVIDIA CUDA base image for GTX 1650 support
 FROM nvidia/cuda:11.8-devel-ubuntu20.04
 
+# Set environment variables for non-interactive installation
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Ho_Chi_Minh
+
 # Set environment variables for GPU
 ENV CUDA_VISIBLE_DEVICES=0
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -17,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cuDNN for GTX 1650 compatibility
