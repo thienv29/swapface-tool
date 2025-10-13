@@ -78,8 +78,8 @@ def swap_video_cached(source_face_cached, video_path, output_path, source_img_fa
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # Use H.264 codec to maintain reasonable file size (GTX 1650 optimization)
-    fourcc = cv2.VideoWriter_fourcc(*'H264')
+    # Initialize video writer
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
 
     frames = []
