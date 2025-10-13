@@ -66,7 +66,15 @@
           <div class="progress-bar">
             <div class="progress-fill" id="progressFill"></div>
           </div>
-          <div class="progress-text" id="progressText">Processing...</div>
+          <div class="progress-details">
+            <div class="progress-text" id="progressText">Processing...</div>
+            <div class="current-file" id="currentFile" style="font-size: 0.9rem; color: #666; margin-top: 0.25rem;"></div>
+            <div class="processing-speed" id="processingSpeed" style="font-size: 0.8rem; color: #888; margin-top: 0.25rem;"></div>
+          </div>
+          <div class="queue-info" id="queueInfo" style="margin-top: 1rem; padding: 0.75rem; background: #f8f9fa; border-radius: 0.5rem; display: none;">
+            <div style="font-size: 0.9rem; font-weight: 500; margin-bottom: 0.5rem;">Queue Status:</div>
+            <div id="queueDetails"></div>
+          </div>
         </div>
       </div>
     </div>
