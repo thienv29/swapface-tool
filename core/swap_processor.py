@@ -502,6 +502,35 @@ class BatchProcessor:
                 error_message=f"Processing error: {str(e)}"
             ) for _ in target_filenames]
 
+    def _fallback_to_copy(self, target_path: str, target_filename: str) -> SwapResult:
+        """Fallback: copy original file to output when processing fails."""
+        logger.warning(f"Falling back to copy original file for {target_filename}")
+        try:
+            import shutil
+            output_uuid = str(uuid.uuid4())
+            if VideoProcessor.is_video_file(target_filename):
+                output_path = f"{self.swap_processor.config.output_directory}/{output_uuid}_{target_filename}"
+            else:
+                output_path = f"{self.swap_processor.config.output_directory}/{output_uuid}_{target_filename}"
+
+            shutil.copy2(target_path, output_path)
+            logger.info(f"Original file copied to: {output_path}")
+
+            file_type = FileType.VIDEO if VideoProcessor.is_video_file(target_filename) else FileType.IMAGE
+            return SwapResult(
+                success=True,
+                output_path=f"/view/{output_path}",
+                original_name=target_filename,
+                file_type=file_type
+            )
+        except Exception as copy_e:
+            logger.error(f"Failed to copy original file for {target_filename}: {copy_e}")
+            return SwapResult(
+                success=False,
+                error_message=f"Processing failed and could not copy original file",
+                original_name=target_filename
+            )
+
     def _process_single_file_with_progress(self, source_face_cache, target_path: str, target_filename: str) -> SwapResult:
         """Process a single file with progress tracking."""
         logger.info(f"Starting processing of file: {target_filename}")
@@ -520,6 +549,19 @@ class BatchProcessor:
         elif VideoProcessor.is_video_file(target_filename):
             # Initialize video progress
             self._update_file_progress(target_filename, "processing", progress_percentage=0.0)
+
+            # Check if video is readable before processing
+            try:
+                cap_test = cv2.VideoCapture(target_path)
+                if not cap_test.isOpened():
+                    logger.error(f"Cannot open video file {target_filename} for reading")
+                    cap_test.release()
+                    return self._fallback_to_copy(target_path, target_filename)
+                cap_test.release()
+            except Exception as e:
+                logger.error(f"Video file validation failed for {target_filename}: {e}")
+                return self._fallback_to_copy(target_path, target_filename)
+
             try:
                 fps, width, height, total_frames = self.swap_processor.video_processor.get_video_info(target_path)
                 logger.info(f"Video info for {target_filename}: {width}x{height}, {total_frames} frames, {fps} FPS")
@@ -530,7 +572,7 @@ class BatchProcessor:
                         total_frames=total_frames
                     )
             except Exception as e:
-                logger.warning(f"Could not get video info for {target_filename}: {e}")
+                logger.warning(f"Could not get video info for {target_filename}: {e}, trying to process anyway")
 
             # Process video with frame-by-frame progress
             def video_progress_callback(processed_frames, total_frames):
@@ -553,6 +595,11 @@ class BatchProcessor:
                 logger.info(f"Video processing completed: {target_filename}")
             else:
                 logger.error(f"Video processing failed: {target_filename} - {result.error_message}")
+                # Try to copy original on video processing failure
+                try:
+                    return self._fallback_to_copy(target_path, target_filename)
+                except:
+                    pass
 
             return result
         else:

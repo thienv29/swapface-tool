@@ -120,9 +120,18 @@ class VideoProcessor:
             # Get video info
             fps, frame_width, frame_height, total_frames = self.get_video_info(video_path)
 
-            # Initialize video capture and writer
+            # Initialize video capture and writer with codec validation
             cap = cv2.VideoCapture(video_path)
-            out = self.create_video_writer(output_path, fps, frame_width, frame_height)
+            if not cap.isOpened():
+                logger.error(f"Failed to open video file for processing: {video_path}")
+                return False
+
+            try:
+                out = self.create_video_writer(output_path, fps, frame_width, frame_height)
+            except RuntimeError as e:
+                logger.error(f"Video writer creation failed: {e}")
+                cap.release()
+                return False
 
             frames = []
             frame_count = 0
