@@ -3,6 +3,8 @@ Main application module for face swapping service.
 """
 import logging
 from flask import Flask, render_template
+from flask_httpauth import HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 from core.config import get_config, setup_environment
 from routes.api import api_bp
 
@@ -12,6 +14,21 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Initialize HTTP Basic Auth
+auth = HTTPBasicAuth()
+
+# Hardcoded credentials
+USERS = {
+    "admin": generate_password_hash("Thien1lan@123")
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    """Verify username and password."""
+    if username in USERS and check_password_hash(USERS.get(username), password):
+        return username
+    return None
 
 
 def create_app() -> Flask:
@@ -31,6 +48,7 @@ def create_app() -> Flask:
 
     # Web routes
     @app.route("/")
+    @auth.login_required
     def index():
         """Render main page."""
         return render_template("index.html")

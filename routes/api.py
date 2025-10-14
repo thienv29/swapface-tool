@@ -5,8 +5,25 @@ import logging
 import sys
 import os
 from flask import Blueprint, request, jsonify
+from flask_httpauth import HTTPBasicAuth
 from typing import List, Tuple
 import cv2
+
+# Import auth from app.py
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# Initialize HTTP Basic Auth (shared with app.py)
+auth = HTTPBasicAuth()
+USERS = {
+    "admin": generate_password_hash("Thien1lan@123")
+}
+
+@auth.verify_password
+def verify_password(username, password):
+    """Verify username and password."""
+    if username in USERS and check_password_hash(USERS.get(username), password):
+        return username
+    return None
 
 # Add parent directory to path for absolute imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -69,6 +86,7 @@ def _validate_request(src_file, tgt_files):
 
 
 @api_bp.route("/swapface", methods=["POST"])
+@auth.login_required
 def swapface_api():
     """Handle face swap requests."""
     try:
@@ -123,6 +141,7 @@ def swapface_api():
 
 
 @api_bp.route("/status", methods=["GET"])
+@auth.login_required
 def get_status():
     """Get current processing status."""
     try:
@@ -204,6 +223,7 @@ def get_status():
 
 
 @api_bp.route("/view/<path:filename>")
+@auth.login_required
 def view_file(filename):
     """Serve processed files."""
     from flask import send_file, Response
@@ -251,6 +271,7 @@ def view_file(filename):
 
 
 @api_bp.route("/download/<path:filename>")
+@auth.login_required
 def download_file(filename):
     """Download processed files."""
     from flask import send_file
