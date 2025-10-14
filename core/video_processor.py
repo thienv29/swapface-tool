@@ -11,12 +11,8 @@ from .models import SwapResult, FileType
 
 logger = logging.getLogger(__name__)
 
-try:
-    from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
-    MOVIEPY_AVAILABLE = True
-except ImportError:
-    MOVIEPY_AVAILABLE = False
-    logger.warning("MoviePy not available, audio processing will be limited")
+MOVIEPY_AVAILABLE = False
+logger.warning("MoviePy support disabled - using ffmpeg only for audio processing")
 
 
 class VideoProcessor:
