@@ -9,14 +9,14 @@ import cv2
 import numpy as np
 from .models import SwapResult, FileType
 
+logger = logging.getLogger(__name__)
+
 try:
     from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
     MOVIEPY_AVAILABLE = True
 except ImportError:
     MOVIEPY_AVAILABLE = False
     logger.warning("MoviePy not available, audio processing will be limited")
-
-logger = logging.getLogger(__name__)
 
 
 class VideoProcessor:

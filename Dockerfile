@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     libxrender-dev \
     libgomp1 \
     tzdata \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install cuDNN for GTX 1650 compatibility
