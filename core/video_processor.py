@@ -2,6 +2,7 @@
 Video processing utilities for face swapping.
 """
 import logging
+import os
 from typing import Callable, Tuple, Optional
 import cv2
 import numpy as np
