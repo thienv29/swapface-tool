@@ -330,17 +330,21 @@ class SwapProcessor:
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> SwapResult:
         """Process a single file (image or video)."""
-        target_img = cv2.imread(target_path)
-        if target_img is not None:
-            return self.process_image(source_face_cache, target_path, target_filename)
-        elif VideoProcessor.is_video_file(target_filename):
+        # First check file extension to determine type
+        if target_filename.lower().endswith(('.gif', '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm')):
+            # Video/GIF files
             return self.process_video(source_face_cache, target_path, target_filename, progress_callback)
         else:
-            return SwapResult(
-                success=False,
-                error_message=f"Unsupported file type: {target_filename}",
-                original_name=target_filename
-            )
+            # Try to read as image
+            target_img = cv2.imread(target_path)
+            if target_img is not None:
+                return self.process_image(source_face_cache, target_path, target_filename)
+            else:
+                return SwapResult(
+                    success=False,
+                    error_message=f"Cannot read file as image: {target_filename}",
+                    original_name=target_filename
+                )
 
     def process_batch(
         self,
