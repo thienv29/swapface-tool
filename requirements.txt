@@ -7,3 +7,8 @@ onnxruntime-gpu>=1.15.0
 torch>=2.0.0
 torchvision>=0.15.0
 pillow>=10.0.0
+
+# Note: ffmpeg is required for audio processing
+# Install on Ubuntu/Debian: sudo apt-get install ffmpeg
+# Install on macOS: brew install ffmpeg
+# Install on Windows: Download from https://ffmpeg.org/download.html
