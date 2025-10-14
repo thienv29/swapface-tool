@@ -206,6 +206,94 @@ def get_status():
 @api_bp.route("/view/<path:filename>")
 def view_file(filename):
     """Serve processed files."""
+    from flask import send_file, Response
+    import mimetypes
+
+    # Get proper mimetype
+    mimetype, _ = mimetypes.guess_type(filename)
+
+    # Default fallback mimetypes
+    if not mimetype:
+        if filename.lower().endswith((".jpg", ".jpeg")):
+            mimetype = "image/jpeg"
+        elif filename.lower().endswith(".png"):
+            mimetype = "image/png"
+        elif filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+            mimetype = "video/mp4"
+        else:
+            mimetype = "application/octet-stream"
+
+    try:
+        # Ensure file exists
+        if not os.path.exists(filename):
+            logger.error(f"File not found: {filename}")
+            return jsonify({"error": "File not found"}), 404
+
+        # Get file size for headers
+        file_size = os.path.getsize(filename)
+
+        response = send_file(
+            filename,
+            mimetype=mimetype,
+            as_attachment=False,
+            conditional=True
+        )
+
+        # Add headers for better browser support
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+        response.headers['Content-Length'] = file_size
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error serving file {filename}: {e}")
+        return jsonify({"error": "Error serving file"}), 500
+
+
+@api_bp.route("/download/<path:filename>")
+def download_file(filename):
+    """Download processed files."""
     from flask import send_file
-    mimetype = "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "video/mp4"
-    return send_file(filename, mimetype=mimetype)
+    import mimetypes
+
+    # Get proper mimetype
+    mimetype, _ = mimetypes.guess_type(filename)
+
+    # Default fallback mimetypes
+    if not mimetype:
+        if filename.lower().endswith((".jpg", ".jpeg")):
+            mimetype = "image/jpeg"
+        elif filename.lower().endswith(".png"):
+            mimetype = "image/png"
+        elif filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+            mimetype = "video/mp4"
+        else:
+            mimetype = "application/octet-stream"
+
+    try:
+        # Ensure file exists
+        if not os.path.exists(filename):
+            logger.error(f"Download file not found: {filename}")
+            return jsonify({"error": "File not found"}), 404
+
+        # Extract original filename for download
+        original_filename = filename.split('_', 1)[-1] if '_' in filename else filename
+
+        response = send_file(
+            filename,
+            mimetype=mimetype,
+            as_attachment=True,
+            download_name=original_filename,
+            conditional=True
+        )
+
+        # Add headers for download
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Error downloading file {filename}: {e}")
+        return jsonify({"error": "Error downloading file"}), 500

@@ -4,6 +4,22 @@ This is a tool API optimized for Windows GTX 1650 GPU for swapping faces in imag
 
 **Optimized for GTX 1650 (4GB VRAM) with CUDA support**
 
+## 🎯 Recent Updates (v2.0)
+
+### ✅ **Complete Refactoring for Production**
+- **Modular Architecture**: Separated into core, routes, services, config modules
+- **Audio Preservation**: Videos now keep original audio track using ffmpeg/MoviePy
+- **Robust Error Handling**: Graceful fallback to original files when processing fails
+- **Real-time Progress**: Individual file progress with frame counts for videos
+- **Enhanced Logging**: Comprehensive server-side logging for debugging
+- **Better Download**: Dedicated download endpoint with proper headers
+
+### ✅ **Audio & Download Fixes**
+- **Video Audio**: Preserved using ffmpeg + MoviePy fallback
+- **Download Function**: Fixed download issues with proper headers
+- **Codec Support**: Multiple codec fallback for video creation
+- **File Serving**: Improved file serving with proper mimetypes
+
 ## Features
 
 - Face detection using InsightFace with Buffalo L model
@@ -20,6 +36,12 @@ This is a tool API optimized for Windows GTX 1650 GPU for swapping faces in imag
 - Docker Desktop with NVIDIA Docker support
 - Docker Compose
 - Git
+- ffmpeg (for audio processing in videos)
+
+### ffmpeg Installation
+- **Ubuntu/Debian**: `sudo apt-get install ffmpeg`
+- **macOS**: `brew install ffmpeg`
+- **Windows**: Download from https://ffmpeg.org/download.html
 
 ## Installation & Docker Build (Windows)
 
