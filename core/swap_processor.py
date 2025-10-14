@@ -34,7 +34,7 @@ class FileProcessor:
 
     def validate_file(self, filename: str) -> bool:
         """Basic file validation."""
-        allowed_extensions = {'.jpg', '.jpeg', '.png', '.mp4', '.avi', '.mov', '.mkv'}
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.mp4', '.avi', '.mov', '.mkv'}
         return any(filename.lower().endswith(ext) for ext in allowed_extensions)
 
     def cleanup_temp_files(self, file_paths: List[str]):
@@ -225,40 +225,80 @@ class SwapProcessor:
             logger.info(f"Processing video with audio: {target_filename}")
 
             output_uuid = str(uuid.uuid4())
-            output_path = f"{self.config.output_directory}/{output_uuid}.mp4"
 
-            # Define swap callback for video processing
-            def swap_callback(frame):
-                # Detect faces in current frame
-                frame_result = self.face_services.detector.detect_faces(frame)
-                if not frame_result.success or not frame_result.faces:
-                    logger.debug("No faces detected in frame, skipping swap")
-                    return frame
+            # Special handling for GIF files - they have no audio
+            if target_filename.lower().endswith('.gif'):
+                logger.info("GIF file detected, processing without audio preservation")
+                output_path = f"{self.config.output_directory}/{output_uuid}.gif"
 
-                try:
-                    # Perform swap
-                    result = self.face_services.swapper.swap_faces(
-                        source_face_cache,
-                        frame,
-                        frame_result.faces[0]  # Use first detected face
-                    )
-
-                    if result is not None and result.size > 0:
-                        return result
-                    else:
-                        logger.debug("Face swap returned empty result, using original frame")
+                # Define swap callback for video processing
+                def swap_callback(frame):
+                    # Detect faces in current frame
+                    frame_result = self.face_services.detector.detect_faces(frame)
+                    if not frame_result.success or not frame_result.faces:
+                        logger.debug("No faces detected in frame, skipping swap")
                         return frame
 
-                except Exception as e:
-                    logger.debug(f"Frame swap error, using original frame: {e}")
-                    return frame
+                    try:
+                        # Perform swap
+                        result = self.face_services.swapper.swap_faces(
+                            source_face_cache,
+                            frame,
+                            frame_result.faces[0]  # Use first detected face
+                        )
 
-            success = self.video_processor.process_video_with_audio(
-                target_path,
-                output_path,
-                swap_callback,
-                progress_callback
-            )
+                        if result is not None and result.size > 0:
+                            return result
+                        else:
+                            logger.debug("Face swap returned empty result, using original frame")
+                            return frame
+
+                    except Exception as e:
+                        logger.debug(f"Frame swap error, using original frame: {e}")
+                        return frame
+
+                success = self.video_processor.process_video_to_gif(
+                    target_path,
+                    output_path,
+                    swap_callback,
+                    progress_callback
+                )
+            else:
+                # Regular video with audio preservation
+                output_path = f"{self.config.output_directory}/{output_uuid}.mp4"
+
+                # Define swap callback for video processing
+                def swap_callback(frame):
+                    # Detect faces in current frame
+                    frame_result = self.face_services.detector.detect_faces(frame)
+                    if not frame_result.success or not frame_result.faces:
+                        logger.debug("No faces detected in frame, skipping swap")
+                        return frame
+
+                    try:
+                        # Perform swap
+                        result = self.face_services.swapper.swap_faces(
+                            source_face_cache,
+                            frame,
+                            frame_result.faces[0]  # Use first detected face
+                        )
+
+                        if result is not None and result.size > 0:
+                            return result
+                        else:
+                            logger.debug("Face swap returned empty result, using original frame")
+                            return frame
+
+                    except Exception as e:
+                        logger.debug(f"Frame swap error, using original frame: {e}")
+                        return frame
+
+                success = self.video_processor.process_video_with_audio(
+                    target_path,
+                    output_path,
+                    swap_callback,
+                    progress_callback
+                )
 
             if success:
                 return SwapResult(

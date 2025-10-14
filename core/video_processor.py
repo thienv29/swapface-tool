@@ -135,6 +135,31 @@ class VideoProcessor:
                 out = self.create_video_writer(output_path, fps, frame_width, frame_height)
             except RuntimeError as e:
                 logger.error(f"Video writer creation failed: {e}")
+                # For GIF files, try to write as GIF specifically
+                if output_path.lower().endswith('.gif'):
+                    logger.info("Trying GIF-specific handling...")
+                    try:
+                        import imageio
+                        frames_for_gif = []
+                        cap = cv2.VideoCapture(video_path)  # Re-open since we released it
+                        if not cap.isOpened():
+                            return False
+                        while True:
+                            ret, frame = cap.read()
+                            if not ret:
+                                break
+                            processed_frame = face_swap_callback(frame)
+                            frames_for_gif.append(cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB))
+                            if progress_callback:
+                                progress_callback(len(frames_for_gif), total_frames or len(frames_for_gif))
+                        cap.release()
+                        imageio.mimsave(output_path, frames_for_gif, 'GIF', duration=1.0/(fps or 10))
+                        logger.info("GIF saved successfully with imageio")
+                        return True
+                    except ImportError:
+                        logger.warning("imageio not available for GIF handling")
+                    except Exception as gif_e:
+                        logger.error(f"GIF processing failed: {gif_e}")
                 cap.release()
                 return False
 
@@ -300,6 +325,85 @@ class VideoProcessor:
             logger.error(f"Video processing error: {e}")
             return False
 
+    def process_video_to_gif(
+        self,
+        video_path: str,
+        output_path: str,
+        face_swap_callback: Callable[[np.ndarray], np.ndarray],
+        progress_callback: Optional[Callable[[int, int], None]] = None
+    ) -> bool:
+        """Process video directly to GIF format without audio processing."""
+        try:
+            logger.info(f"Processing video to GIF: {video_path}")
+
+            # Get video info
+            fps, frame_width, frame_height, total_frames = self.get_video_info(video_path)
+
+            # Initialize video capture
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                logger.error(f"Failed to open video file for processing: {video_path}")
+                return False
+
+            frames_for_gif = []
+            frame_count = 0
+            processed_frames_count = 0
+
+            logger.info(f"Video info - FPS: {fps}, Size: {frame_width}x{frame_height}, Frames: {total_frames}")
+
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_count += 1
+
+                try:
+                    processed_frame = face_swap_callback(frame)
+                    # Check if we got a valid result
+                    if processed_frame is not None and processed_frame.size > 0:
+                        # Convert from BGR to RGB for imageio
+                        rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        frames_for_gif.append(rgb_frame)
+                        processed_frames_count += 1
+                        logger.debug(f"Processed GIF frame {frame_count}/{total_frames}")
+                    else:
+                        logger.debug(f"Face swap returned empty result on frame {frame_count}, using original frame")
+                        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frames_for_gif.append(rgb_frame)
+                except Exception as e:
+                    logger.debug(f"Frame processing error on frame {frame_count} (using original): {e}")
+                    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    frames_for_gif.append(rgb_frame)  # Use original frame on error
+
+                # Update progress
+                if progress_callback:
+                    progress_callback(frame_count, total_frames)
+
+            # Cleanup capture
+            cap.release()
+
+            logger.info(f"Processed {processed_frames_count} frames for GIF")
+
+            # Save as GIF using imageio
+            try:
+                import imageio
+                # Calculate duration based on original FPS or default to 10 FPS
+                duration = 1.0 / (fps or 10)
+                imageio.mimsave(output_path, frames_for_gif, 'GIF', duration=duration, loop=0)
+                logger.info(f"GIF saved successfully: {output_path}")
+                return True
+            except ImportError:
+                logger.error("imageio not available for GIF processing. Install with: pip install imageio")
+                return False
+            except Exception as gif_e:
+                logger.error(f"GIF saving failed: {gif_e}")
+                return False
+
+        except Exception as e:
+            logger.error(f"GIF processing error: {e}")
+            return False
+
     def _combine_video_audio(self, original_video: str, processed_video: str, output_path: str):
         """Combine processed video with original audio using ffmpeg or moviepy."""
         try:
@@ -386,5 +490,5 @@ class VideoProcessor:
     @staticmethod
     def is_video_file(filename: str) -> bool:
         """Check if file is a video based on extension."""
-        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm'}
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '.gif'}
         return any(filename.lower().endswith(ext) for ext in video_extensions)
