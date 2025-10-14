@@ -296,25 +296,15 @@ function downloadFile(imageSrc, filename) {
   // Extract original filename without UUID
   const originalFilename = filename;
 
-  // Use the dedicated download endpoint for better download support
-  const downloadUrl = `/download${imageSrc}`;
-
   // Create a temporary anchor element
   const link = document.createElement('a');
-  link.href = downloadUrl;
-  link.target = '_blank';
-  link.style.display = 'none';
+  link.href = imageSrc;
+  link.download = originalFilename;
 
   // Append to body, click, and remove
   document.body.appendChild(link);
-
-  // Use setTimeout to ensure the element is added to DOM before clicking
-  setTimeout(() => {
-    link.click();
-    setTimeout(() => {
-      document.body.removeChild(link);
-    }, 100);
-  }, 100);
+  link.click();
+  document.body.removeChild(link);
 }
 
 // Remove single file function

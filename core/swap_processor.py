@@ -210,19 +210,9 @@ class SwapProcessor:
         target_filename: str,
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> SwapResult:
-        """Process a single video file (legacy method - use process_video_with_audio instead)."""
-        return self.process_video_with_audio(source_face_cache, target_path, target_filename, progress_callback)
-
-    def process_video_with_audio(
-        self,
-        source_face_cache,
-        target_path: str,
-        target_filename: str,
-        progress_callback: Optional[Callable[[int, int], None]] = None
-    ) -> SwapResult:
-        """Process a single video file with audio preservation."""
+        """Process a single video file."""
         try:
-            logger.info(f"Processing video with audio: {target_filename}")
+            logger.info(f"Processing video: {target_filename}")
 
             output_uuid = str(uuid.uuid4())
             output_path = f"{self.config.output_directory}/{output_uuid}.mp4"
@@ -253,7 +243,7 @@ class SwapProcessor:
                     logger.debug(f"Frame swap error, using original frame: {e}")
                     return frame
 
-            success = self.video_processor.process_video_with_audio(
+            success = self.video_processor.process_video_batch(
                 target_path,
                 output_path,
                 swap_callback,
@@ -597,7 +587,7 @@ class BatchProcessor:
                 )
 
             logger.info(f"Starting video processing: {target_filename}")
-            result = self.swap_processor.process_video_with_audio(
+            result = self.swap_processor.process_video(
                 source_face_cache, target_path, target_filename, video_progress_callback
             )
 
