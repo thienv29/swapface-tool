@@ -256,31 +256,43 @@ def download_file(filename):
     from flask import send_file
     import mimetypes
 
+    # Handle various URL formats: view/output/, output/, or just filename
+    if filename.startswith('view/output/'):
+        # Remove view/ prefix, keep output/
+        filepath = filename[5:]  # Remove 'view/' prefix
+    elif filename.startswith('output/'):
+        # Use as is
+        filepath = filename
+    else:
+        # Assume it's just the filename, prepend output/
+        filepath = f"output/{filename}"
+
     # Get proper mimetype
-    mimetype, _ = mimetypes.guess_type(filename)
+    mimetype, _ = mimetypes.guess_type(filepath)
 
     # Default fallback mimetypes
     if not mimetype:
-        if filename.lower().endswith((".jpg", ".jpeg")):
+        if filepath.lower().endswith((".jpg", ".jpeg")):
             mimetype = "image/jpeg"
-        elif filename.lower().endswith(".png"):
+        elif filepath.lower().endswith(".png"):
             mimetype = "image/png"
-        elif filename.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+        elif filepath.lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
             mimetype = "video/mp4"
         else:
             mimetype = "application/octet-stream"
 
     try:
         # Ensure file exists
-        if not os.path.exists(filename):
-            logger.error(f"Download file not found: {filename}")
+        if not os.path.exists(filepath):
+            logger.error(f"Download file not found: {filepath}")
             return jsonify({"error": "File not found"}), 404
 
         # Extract original filename for download
-        original_filename = filename.split('_', 1)[-1] if '_' in filename else filename
+        original_filename = filepath.split('_', 1)[-1] if '_' in filepath else filepath
+        original_filename = original_filename.replace('output/', '')
 
         response = send_file(
-            filename,
+            filepath,
             mimetype=mimetype,
             as_attachment=True,
             download_name=original_filename,
@@ -295,5 +307,5 @@ def download_file(filename):
         return response
 
     except Exception as e:
-        logger.error(f"Error downloading file {filename}: {e}")
+        logger.error(f"Error downloading file {filepath}: {e}")
         return jsonify({"error": "Error downloading file"}), 500
