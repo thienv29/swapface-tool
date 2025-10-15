@@ -128,6 +128,10 @@ def swapface_api():
                 "retry_after": 30  # Suggest retry after 30 seconds
             }), 409
 
+        # Check for request entity too large (file size limit exceeded)
+        if request.content_length and request.content_length > 2000 * 1024 * 1024:  # 2000MB limit
+            return jsonify({"error": "Upload size exceeds maximum limit (2000MB)"}), 413
+
         src_file = request.files.get("source")
         tgt_files = request.files.getlist("targets")
 
@@ -136,25 +140,32 @@ def swapface_api():
         if not is_valid:
             return jsonify({"error": error_msg}), 400
 
-        # Save files
+        # Save files with progress logging
+        logger.info("Starting file upload processing...")
         src_path = file_processor.save_uploaded_file(src_file, src_file.filename)
+        logger.info(f"Source file saved: {src_path}")
+
         target_files, target_filenames = _extract_file_list(tgt_files)
+        logger.info(f"Target files processed: {len(target_files)} files")
 
         if not target_files:
             return jsonify({"error": "Cannot save any target files"}), 400
 
         # Validate source image
+        logger.info("Validating source image...")
         source_img = cv2.imread(src_path)
         if source_img is None:
             file_processor.cleanup_temp_files([src_path])
             return jsonify({"error": "Cannot read source image"}), 400
 
         # Validate source face
+        logger.info("Detecting faces in source image...")
         source_faces = face_services.detector.detect_faces(source_img)
         if not source_faces.success:
             file_processor.cleanup_temp_files([src_path])
             return jsonify({"error": source_faces.error_message or "No source face detected"}), 400
 
+        logger.info("Starting background processing...")
         # Start background processing
         success = batch_processor.start_background_processing(
             src_path, target_files, target_filenames
@@ -164,14 +175,23 @@ def swapface_api():
             file_processor.cleanup_temp_files([src_path] + target_files)
             return jsonify({"error": "Cannot start processing"}), 500
 
+        logger.info(f"Processing started successfully for {len(target_files)} files")
         return jsonify({
             "message": "Processing started",
             "total_files": len(target_files)
         }), 202
 
+    except ValueError as e:
+        # Handle file size limit exceeded
+        if "exceeds maximum limit" in str(e):
+            logger.warning(f"File size limit exceeded: {e}")
+            return jsonify({"error": str(e)}), 413
+        # Handle other validation errors
+        logger.warning(f"Validation error: {e}")
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"API error: {e}")
-        return jsonify({"error": f"Internal server error: {str(e)}"}), 500
+        return jsonify({"error": "Internal server error occurred"}), 500
 
 
 @api_bp.route("/status", methods=["GET"])
