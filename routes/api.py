@@ -4,10 +4,16 @@ API routes for face swapping operations.
 import logging
 import sys
 import os
-from flask import Blueprint, request, jsonify
+import aiofiles
+import asyncio
+import uuid
+from flask import Blueprint, request, jsonify, Response
 from flask_httpauth import HTTPBasicAuth
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 import cv2
+import threading
+import time
+import io
 
 # Import auth from app.py
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -45,15 +51,30 @@ file_processor = FileProcessor(config)
 # Initialize models
 face_services.initialize()
 
+# Global upload progress tracking
+upload_progress: Dict[str, Dict[str, Any]] = {}
+progress_lock = threading.Lock()
+
 # Create blueprint
 api_bp = Blueprint('api', __name__)
 
 
-def _extract_file_list(files, max_total_size_mb: float = 2000.0):
-    """Extract uploaded files and their filenames with size validation."""
+def _extract_file_list(files, max_total_size_mb: float = 2000.0, upload_id: Optional[str] = None, progress_lock=None):
+    """Extract uploaded files and their filenames with size validation and progress tracking."""
     target_files = []
     target_filenames = []
     total_size = 0
+
+    def update_progress(current_size: int, total_size: int):
+        """Update upload progress for this session."""
+        if upload_id and progress_lock:
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["bytes_uploaded"] = current_size
+                    upload_progress[upload_id]["total_bytes"] = total_size
+                    upload_progress[upload_id]["progress_percentage"] = (
+                        (current_size / total_size) * 100 if total_size > 0 else 0
+                    )
 
     for file in files:
         if file and file.filename:
@@ -80,6 +101,10 @@ def _extract_file_list(files, max_total_size_mb: float = 2000.0):
                 target_files.append(file_path)
                 target_filenames.append(file.filename)
                 logger.info(f"Uploaded file: {file.filename} ({file_size / 1024 / 1024:.1f}MB)")
+
+                # Update progress after each file
+                update_progress(total_size, max_total_size_mb * 1024 * 1024)
+
             except Exception as e:
                 # Clean up on failure
                 for saved_path in target_files:
@@ -92,6 +117,50 @@ def _extract_file_list(files, max_total_size_mb: float = 2000.0):
 
     logger.info(f"Total upload size: {total_size / 1024 / 1024:.1f}MB for {len(target_files)} files")
     return target_files, target_filenames
+
+
+@api_bp.route("/upload-progress/<upload_id>", methods=["GET"])
+@auth.login_required
+def get_upload_progress(upload_id: str):
+    """Get upload progress for a specific upload ID."""
+    with progress_lock:
+        if upload_id in upload_progress:
+            return jsonify(upload_progress[upload_id])
+        else:
+            return jsonify({"error": "Upload ID not found"}), 404
+
+
+def create_upload_session(total_files: int, total_size_mb: float) -> str:
+    """Create a new upload session and return the upload ID."""
+    upload_id = str(uuid.uuid4())
+    with progress_lock:
+        upload_progress[upload_id] = {
+            "upload_id": upload_id,
+            "start_time": time.time(),
+            "total_files": total_files,
+            "files_uploaded": 0,
+            "bytes_uploaded": 0,
+            "total_bytes": int(total_size_mb * 1024 * 1024),
+            "progress_percentage": 0.0,
+            "status": "uploading",
+            "estimated_time_remaining": 0.0
+        }
+    logger.info(f"Created upload session: {upload_id}")
+    return upload_id
+
+
+def cleanup_expired_uploads():
+    """Clean up expired upload sessions (older than 24 hours)."""
+    current_time = time.time()
+    expired_ids = []
+    with progress_lock:
+        for upload_id, session in upload_progress.items():
+            if current_time - session["start_time"] > 24 * 3600:  # 24 hours
+                expired_ids.append(upload_id)
+
+        for upload_id in expired_ids:
+            del upload_progress[upload_id]
+            logger.info(f"Cleaned up expired upload session: {upload_id}")
 
 
 def _validate_request(src_file, tgt_files):
@@ -119,7 +188,7 @@ def _validate_request(src_file, tgt_files):
 @api_bp.route("/swapface", methods=["POST"])
 @auth.login_required
 def swapface_api():
-    """Handle face swap requests."""
+    """Handle face swap requests with optimized uploading."""
     try:
         # Check if already processing
         if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
@@ -128,9 +197,7 @@ def swapface_api():
                 "retry_after": 30  # Suggest retry after 30 seconds
             }), 409
 
-        # Check for request entity too large (file size limit exceeded)
-        if request.content_length and request.content_length > 2000 * 1024 * 1024:  # 2000MB limit
-            return jsonify({"error": "Upload size exceeds maximum limit (2000MB)"}), 413
+        cleanup_expired_uploads()  # Clean up old upload sessions
 
         src_file = request.files.get("source")
         tgt_files = request.files.getlist("targets")
@@ -140,29 +207,62 @@ def swapface_api():
         if not is_valid:
             return jsonify({"error": error_msg}), 400
 
-        # Save files with progress logging
-        logger.info("Starting file upload processing...")
+        # Create upload session for progress tracking
+        total_files = 1 + len(tgt_files)  # source + targets
+        estimated_total_size_mb = 2000.0  # Initial estimate, will be updated during upload
+        upload_id = create_upload_session(total_files, estimated_total_size_mb)
+
+        # Save files with progress tracking
+        logger.info("Starting optimized file upload processing...")
+
+        # Save source file first
         src_path = file_processor.save_uploaded_file(src_file, src_file.filename)
         logger.info(f"Source file saved: {src_path}")
 
-        target_files, target_filenames = _extract_file_list(tgt_files)
+        # Update progress after source file
+        with progress_lock:
+            if upload_id in upload_progress:
+                upload_progress[upload_id]["files_uploaded"] = 1
+
+        # Save target files with progress tracking
+        target_files, target_filenames = _extract_file_list(
+            tgt_files,
+            upload_id=upload_id,
+            progress_lock=progress_lock
+        )
         logger.info(f"Target files processed: {len(target_files)} files")
 
+        # Update final progress
+        with progress_lock:
+            if upload_id in upload_progress:
+                upload_progress[upload_id]["files_uploaded"] = total_files
+                upload_progress[upload_id]["status"] = "completed"
+
         if not target_files:
+            file_processor.cleanup_temp_files([src_path])
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": "Cannot save any target files"}), 400
 
         # Validate source image
         logger.info("Validating source image...")
         source_img = cv2.imread(src_path)
         if source_img is None:
-            file_processor.cleanup_temp_files([src_path])
+            file_processor.cleanup_temp_files([src_path] + target_files)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": "Cannot read source image"}), 400
 
         # Validate source face
         logger.info("Detecting faces in source image...")
         source_faces = face_services.detector.detect_faces(source_img)
         if not source_faces.success:
-            file_processor.cleanup_temp_files([src_path])
+            file_processor.cleanup_temp_files([src_path] + target_files)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": source_faces.error_message or "No source face detected"}), 400
 
         logger.info("Starting background processing...")
@@ -173,12 +273,16 @@ def swapface_api():
 
         if not success:
             file_processor.cleanup_temp_files([src_path] + target_files)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": "Cannot start processing"}), 500
 
         logger.info(f"Processing started successfully for {len(target_files)} files")
         return jsonify({
             "message": "Processing started",
-            "total_files": len(target_files)
+            "total_files": len(target_files),
+            "upload_id": upload_id
         }), 202
 
     except ValueError as e:

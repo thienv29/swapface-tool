@@ -9,6 +9,8 @@ import numpy as np
 from typing import List, Optional, Callable, Any
 import threading
 import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from .models import (
     SwapResult, ProcessingProgress, ProcessingStatus, FileType,
     Config, ProcessingTask
@@ -26,7 +28,7 @@ class FileProcessor:
         self.config = config
 
     def save_uploaded_file(self, file, filename: str, max_size_mb: float = 500.0) -> str:
-        """Save uploaded file to temporary location with size validation."""
+        """Save uploaded file to temporary location with size validation and streaming for large files."""
         # Validate file size before starting upload
         file.seek(0, 2)  # Seek to end
         file_size = file.tell()
@@ -39,22 +41,87 @@ class FileProcessor:
         file_uuid = str(uuid.uuid4())
         file_path = f"{self.config.temp_directory}/{file_uuid}_{filename}"
 
-        # Save file with progress logging for large files
+        # Use streaming approach for better memory efficiency with large files
         try:
             if file_size > 50 * 1024 * 1024:  # Log progress for files > 50MB
                 logger.info(f"Saving large file ({file_size / 1024 / 1024:.1f}MB): {filename}")
 
-            file.save(file_path)
+            # For very large files, use chunked reading to save memory
+            if file_size > 100 * 1024 * 1024:  # >100MB files use chunked reading
+                with open(file_path, 'wb') as out_file:
+                    chunk_size = 8192  # 8KB chunks
+                    bytes_read = 0
+                    while bytes_read < file_size:
+                        remaining = file_size - bytes_read
+                        read_size = min(chunk_size, remaining)
+                        chunk = file.read(read_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        bytes_read += len(chunk)
+            else:
+                # For smaller files, use the standard method
+                file.save(file_path)
 
             # Verify file was saved correctly
             if os.path.exists(file_path):
                 saved_size = os.path.getsize(file_path)
                 if saved_size != file_size:
                     logger.warning(f"File size mismatch: expected {file_size}, got {saved_size}")
+                else:
+                    logger.info(f"File saved successfully: {file_path} ({saved_size / 1024 / 1024:.1f}MB)")
             else:
                 raise IOError(f"Failed to save file: {file_path}")
 
-            logger.info(f"File saved successfully: {file_path}")
+            return file_path
+
+        except Exception as e:
+            # Cleanup on failure
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            raise e
+
+    async def save_uploaded_file_async(self, file_stream, filename: str, file_size: int, max_size_mb: float = 500.0, progress_callback: Optional[Callable[[int, int], None]] = None) -> str:
+        """Asynchronously save uploaded file with progress tracking for better streaming uploads."""
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if file_size > max_size_bytes:
+            raise ValueError(f"File size exceeds maximum limit of {max_size_mb}MB")
+
+        file_uuid = str(uuid.uuid4())
+        file_path = f"{self.config.temp_directory}/{file_uuid}_{filename}"
+
+        try:
+            # Use async file writing for better performance
+            async with aiofiles.open(file_path, 'wb') as out_file:
+                bytes_written = 0
+                chunk_size = 64 * 1024  # 64KB chunks for better throughput
+
+                while bytes_written < file_size:
+                    remaining = min(chunk_size, file_size - bytes_written)
+                    chunk = file_stream.read(remaining)
+                    if not chunk:
+                        break
+
+                    await out_file.write(chunk)
+                    bytes_written += len(chunk)
+
+                    # Report progress if callback provided
+                    if progress_callback:
+                        progress_callback(bytes_written, file_size)
+
+            # Verify file was saved correctly
+            if os.path.exists(file_path):
+                saved_size = os.path.getsize(file_path)
+                if saved_size != file_size:
+                    logger.warning(f"File size mismatch: expected {file_size}, got {saved_size}")
+                else:
+                    logger.info(f"File saved asynchronously: {file_path} ({saved_size / 1024 / 1024:.1f}MB)")
+            else:
+                raise IOError(f"Failed to save file asynchronously: {file_path}")
+
             return file_path
 
         except Exception as e:

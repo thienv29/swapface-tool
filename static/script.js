@@ -521,7 +521,7 @@ function formatTime(seconds) {
   }
 }
 
-// Form submission
+// Form submission with optimized upload progress
 const form = document.getElementById("swapForm");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -553,6 +553,8 @@ form.addEventListener("submit", async (e) => {
   queueInfoDiv.style.display = 'none';
 
   processingStartTime = Date.now();
+  let uploadProgressInterval = null;
+  let uploadId = null;
 
   try {
     const formData = new FormData(form);
@@ -568,14 +570,50 @@ form.addEventListener("submit", async (e) => {
     // Use XMLHttpRequest for upload progress
     const xhr = new XMLHttpRequest();
 
-    // Upload progress handler
-    xhr.upload.addEventListener('progress', (e) => {
+    let hasStartedProcessing = false;
+
+    // Upload progress handler - enhanced with server-side progress polling
+    xhr.upload.addEventListener('progress', async (e) => {
       if (e.lengthComputable) {
         const percentComplete = (e.loaded / e.total) * 100;
-        progressFill.style.width = percentComplete + '%';
         const uploadedMB = (e.loaded / 1024 / 1024).toFixed(1);
         const totalMB = (e.total / 1024 / 1024).toFixed(1);
-        progressText.textContent = `Đang tải lên: ${uploadedMB}MB / ${totalMB}MB (${Math.round(percentComplete)}%)`;
+
+        // Start polling server progress once upload begins
+        if (uploadId && percentComplete > 5 && !uploadProgressInterval) {
+          uploadProgressInterval = setInterval(async () => {
+            try {
+              const progressRes = await fetch(`/upload-progress/${uploadId}`, {
+                headers: {
+                  'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+                }
+              });
+              if (progressRes.ok) {
+                const progressData = await progressRes.json();
+                if (progressData.status === 'completed') {
+                  // Server-side upload complete, switch to processing phase
+                  progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
+                  button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
+                  if (uploadProgressInterval) {
+                    clearInterval(uploadProgressInterval);
+                    uploadProgressInterval = null;
+                  }
+                } else if (!hasStartedProcessing) {
+                  // Update with server progress
+                  const serverProgress = progressData.progress_percentage;
+                  progressFill.style.width = Math.max(percentComplete, serverProgress) + '%';
+                  progressText.textContent = `Đang tải lên (Server): ${progressData.files_uploaded}/${progressData.total_files} files (${serverProgress.toFixed(1)}%)`;
+                }
+              }
+            } catch (progressError) {
+              console.warn('Server progress polling error:', progressError);
+            }
+          }, 500);
+        }
+
+        // Client-side progress
+        progressFill.style.width = percentComplete + '%';
+        progressText.textContent = `Đang tải lên (Client): ${uploadedMB}MB / ${totalMB}MB (${Math.round(percentComplete)}%)`;
 
         // Calculate upload speed
         const elapsed = (Date.now() - processingStartTime) / 1000;
@@ -593,21 +631,39 @@ form.addEventListener("submit", async (e) => {
 
     // Upload load handler (upload complete)
     xhr.upload.addEventListener('load', () => {
+      if (uploadProgressInterval) {
+        clearInterval(uploadProgressInterval);
+        uploadProgressInterval = null;
+      }
       progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
       button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
+      hasStartedProcessing = true;
     });
 
     // Upload error handler
     xhr.upload.addEventListener('error', () => {
+      if (uploadProgressInterval) {
+        clearInterval(uploadProgressInterval);
+        uploadProgressInterval = null;
+      }
       showError('Upload thất bại do lỗi kết nối');
     });
 
     // Main request response handler
     xhr.addEventListener('load', () => {
       if (xhr.status === 202) {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          uploadId = data.upload_id; // Get upload ID from server response
+          console.log('Upload ID:', uploadId);
+        } catch(e) {}
         // Processing started, start polling for status
         startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
       } else {
+        if (uploadProgressInterval) {
+          clearInterval(uploadProgressInterval);
+          uploadProgressInterval = null;
+        }
         let errorMessage = 'Có lỗi xảy ra khi bắt đầu xử lý';
         try {
           const data = JSON.parse(xhr.responseText);
@@ -619,6 +675,10 @@ form.addEventListener("submit", async (e) => {
 
     // Main request error handler
     xhr.addEventListener('error', () => {
+      if (uploadProgressInterval) {
+        clearInterval(uploadProgressInterval);
+        uploadProgressInterval = null;
+      }
       showError('Vui lòng kiểm tra kết nối mạng và thử lại');
     });
 
@@ -627,6 +687,10 @@ form.addEventListener("submit", async (e) => {
     xhr.setRequestHeader('Authorization', 'Basic ' + btoa('admin:Thien1lan@123'));
     xhr.send(formData);
   } catch (error) {
+    if (uploadProgressInterval) {
+      clearInterval(uploadProgressInterval);
+      uploadProgressInterval = null;
+    }
     clearInterval(statusPollingInterval);
     progressDiv.style.display = 'none';
     progressFill.style.width = '0%';
