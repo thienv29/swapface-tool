@@ -2,7 +2,12 @@ version: '3.8'
 
 services:
   swapface-gtx1650:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Use new image tag for cache busting when needed
+      tags:
+        - "swapface-gtx1650:latest"
     image: swapface-gtx1650
     container_name: swapface-gtx1650-app
     ports:

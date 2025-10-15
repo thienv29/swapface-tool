@@ -1,0 +1,47 @@
+# Version control
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Output directories (will be mounted as volumes)
+output/
+models/
+
+# Documentation
+README.md
+
+# IDE files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build files
+build.bat
+run.bat
+
+# Docker files
+docker-compose*.yml
+Dockerfile*
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
