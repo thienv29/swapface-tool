@@ -1,0 +1,246 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "Face Swap API",
+    "description": "API for face swapping operations",
+    "version": "1.0.0"
+  },
+  "host": "localhost:5000",
+  "basePath": "/api",
+  "schemes": ["http"],
+  "securityDefinitions": {
+    "basicAuth": {
+      "type": "basic"
+    }
+  },
+  "security": [
+    {
+      "basicAuth": []
+    }
+  ],
+  "paths": {
+    "/swapface": {
+      "post": {
+        "summary": "Start face swap processing",
+        "description": "Upload source face image and target images/videos for face swapping processing",
+        "consumes": ["multipart/form-data"],
+        "produces": ["application/json"],
+        "parameters": [
+          {
+            "name": "source",
+            "in": "formData",
+            "description": "Source face image file (JPG, PNG, etc.)",
+            "required": true,
+            "type": "file"
+          },
+          {
+            "name": "targets",
+            "in": "formData",
+            "description": "Target images/videos for face swapping (multiple files supported)",
+            "required": true,
+            "type": "array",
+            "items": {
+              "type": "file"
+            },
+            "collectionFormat": "multi"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Processing started successfully",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "type": "string",
+                  "example": "Processing started"
+                },
+                "total_files": {
+                  "type": "integer",
+                  "example": 3
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request - missing files or invalid file types",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string",
+                  "example": "Missing source file"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Processing already in progress",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                },
+                "retry_after": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/status": {
+      "get": {
+        "summary": "Get processing status",
+        "description": "Get current processing status and progress information",
+        "produces": ["application/json"],
+        "responses": {
+          "200": {
+            "description": "Status information",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "is_processing": {
+                  "type": "boolean",
+                  "example": true
+                },
+                "completed": {
+                  "type": "integer",
+                  "example": 2
+                },
+                "total": {
+                  "type": "integer",
+                  "example": 5
+                },
+                "progress_percentage": {
+                  "type": "number",
+                  "format": "float",
+                  "example": 40.0
+                },
+                "current_file": {
+                  "type": "string",
+                  "example": "target1.jpg"
+                },
+                "queue": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "speed": {
+                  "type": "number",
+                  "format": "float",
+                  "example": 0.15
+                },
+                "eta_seconds": {
+                  "type": "number",
+                  "format": "float",
+                  "example": 120.5
+                },
+                "results": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "success": {
+                        "type": "boolean"
+                      },
+                      "error_message": {
+                        "type": "string"
+                      },
+                      "original_name": {
+                        "type": "string"
+                      },
+                      "file_type": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "error": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/view/{filename}": {
+      "get": {
+        "summary": "View processed file",
+        "description": "View/download processed file by filename",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "Filename of the processed file"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File content"
+          },
+          "404": {
+            "description": "File not found"
+          }
+        }
+      }
+    },
+    "/download/{filename}": {
+      "get": {
+        "summary": "Download processed file",
+        "description": "Download processed file by filename",
+        "parameters": [
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "type": "string",
+            "description": "Filename of the processed file"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File download",
+            "headers": {
+              "Content-Disposition": {
+                "description": "attachment with original filename",
+                "type": "string"
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          }
+        }
+      }
+    }
+  }
+}

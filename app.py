@@ -7,6 +7,7 @@ from flask_httpauth import HTTPBasicAuth
 from werkzeug.security import generate_password_hash, check_password_hash
 from core.config import get_config, setup_environment
 from routes.api import api_bp
+from flask_swagger_ui import get_swaggerui_blueprint
 
 # Configure logging
 logging.basicConfig(
@@ -46,6 +47,16 @@ def create_app() -> Flask:
     app.config['UPLOAD_FOLDER'] = config.temp_directory
 
     logger.info("🚀 Initializing face swapping application...")
+
+    # Swagger UI
+    SWAGGER_URL = '/api/docs'
+    API_URL = '/static/swagger.json'
+    swaggerui_blueprint = get_swaggerui_blueprint(
+        SWAGGER_URL,
+        API_URL,
+        config={'app_name': "Face Swap API"}
+    )
+    app.register_blueprint(swaggerui_blueprint, url_prefix=SWAGGER_URL)
 
     # Register blueprints
     app.register_blueprint(api_bp)
