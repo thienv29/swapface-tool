@@ -25,12 +25,46 @@ class FileProcessor:
     def __init__(self, config: Config):
         self.config = config
 
-    def save_uploaded_file(self, file, filename: str) -> str:
-        """Save uploaded file to temporary location."""
+    def save_uploaded_file(self, file, filename: str, max_size_mb: float = 500.0) -> str:
+        """Save uploaded file to temporary location with size validation."""
+        # Validate file size before starting upload
+        file.seek(0, 2)  # Seek to end
+        file_size = file.tell()
+        file.seek(0)  # Seek back to beginning
+
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if file_size > max_size_bytes:
+            raise ValueError(f"File size exceeds maximum limit of {max_size_mb}MB")
+
         file_uuid = str(uuid.uuid4())
         file_path = f"{self.config.temp_directory}/{file_uuid}_{filename}"
-        file.save(file_path)
-        return file_path
+
+        # Save file with progress logging for large files
+        try:
+            if file_size > 50 * 1024 * 1024:  # Log progress for files > 50MB
+                logger.info(f"Saving large file ({file_size / 1024 / 1024:.1f}MB): {filename}")
+
+            file.save(file_path)
+
+            # Verify file was saved correctly
+            if os.path.exists(file_path):
+                saved_size = os.path.getsize(file_path)
+                if saved_size != file_size:
+                    logger.warning(f"File size mismatch: expected {file_size}, got {saved_size}")
+            else:
+                raise IOError(f"Failed to save file: {file_path}")
+
+            logger.info(f"File saved successfully: {file_path}")
+            return file_path
+
+        except Exception as e:
+            # Cleanup on failure
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            raise e
 
     def validate_file(self, filename: str) -> bool:
         """Basic file validation."""
@@ -439,13 +473,17 @@ class BatchProcessor:
             results=[]
         )
 
-        thread = threading.Thread(
-            target=self._process_batch,
-            args=(source_path, target_paths, target_filenames),
-            daemon=True
-        )
-        thread.start()
-        return True
+        # Add processing lock to prevent concurrent uploads
+        import threading
+        self.processing_lock = threading.Lock()
+        with self.processing_lock:
+            thread = threading.Thread(
+                target=self._process_batch,
+                args=(source_path, target_paths, target_filenames),
+                daemon=True
+            )
+            thread.start()
+            return True
 
     def _process_batch(
         self,

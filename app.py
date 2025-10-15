@@ -41,6 +41,10 @@ def create_app() -> Flask:
     # Setup environment (GPU, threads, directories)
     setup_environment(config)
 
+    # Configure Flask for large file uploads
+    app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max file size
+    app.config['UPLOAD_FOLDER'] = config.temp_directory
+
     logger.info("🚀 Initializing face swapping application...")
 
     # Register blueprints

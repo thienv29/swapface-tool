@@ -49,17 +49,48 @@ face_services.initialize()
 api_bp = Blueprint('api', __name__)
 
 
-def _extract_file_list(files):
-    """Extract uploaded files and their filenames."""
+def _extract_file_list(files, max_total_size_mb: float = 2000.0):
+    """Extract uploaded files and their filenames with size validation."""
     target_files = []
     target_filenames = []
+    total_size = 0
 
     for file in files:
         if file and file.filename:
-            file_path = file_processor.save_uploaded_file(file, file.filename)
-            target_files.append(file_path)
-            target_filenames.append(file.filename)
+            # Check file size before processing
+            file.seek(0, 2)  # Seek to end to get size
+            file_size = file.tell()
+            file.seek(0)  # Seek back to beginning
 
+            total_size += file_size
+
+            # Check if adding this file would exceed total size limit
+            if total_size > max_total_size_mb * 1024 * 1024:
+                # Clean up already saved files
+                for saved_path in target_files:
+                    try:
+                        if os.path.exists(saved_path):
+                            os.remove(saved_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup {saved_path}: {e}")
+                raise ValueError(f"Total upload size exceeds maximum limit of {max_total_size_mb}MB")
+
+            try:
+                file_path = file_processor.save_uploaded_file(file, file.filename)
+                target_files.append(file_path)
+                target_filenames.append(file.filename)
+                logger.info(f"Uploaded file: {file.filename} ({file_size / 1024 / 1024:.1f}MB)")
+            except Exception as e:
+                # Clean up on failure
+                for saved_path in target_files:
+                    try:
+                        if os.path.exists(saved_path):
+                            os.remove(saved_path)
+                    except Exception as cleanup_e:
+                        logger.warning(f"Failed to cleanup {saved_path}: {cleanup_e}")
+                raise e
+
+    logger.info(f"Total upload size: {total_size / 1024 / 1024:.1f}MB for {len(target_files)} files")
     return target_files, target_filenames
 
 
@@ -92,7 +123,10 @@ def swapface_api():
     try:
         # Check if already processing
         if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
-            return jsonify({"error": "Processing is already in progress"}), 409
+            return jsonify({
+                "error": "Processing is already in progress. Please wait for the current batch to complete.",
+                "retry_after": 30  # Suggest retry after 30 seconds
+            }), 409
 
         src_file = request.files.get("source")
         tgt_files = request.files.getlist("targets")
