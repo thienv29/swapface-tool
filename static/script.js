@@ -489,8 +489,8 @@ form.addEventListener("submit", async (e) => {
                 return `
                   <div class="file-item">
                     ${result.type === 'video' ?
-                      `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
-                      `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: 350px; object-fit: cover; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
+                      `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: auto; object-fit: contain; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
+                      `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: auto; object-fit: contain; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
                     <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
                       <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
                         <i class="fas fa-file-${result.type === 'image' ? 'image' : 'video'} file-icon"></i>
