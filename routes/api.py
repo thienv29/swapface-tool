@@ -724,12 +724,17 @@ def swapface_url_api():
 
             # Detect faces
             face_result = face_services.detector.detect_faces(face_img)
-            if not face_result.success:
-                return jsonify({"error": f"No face detected in face image: {face_result.error_message}"}), 400
-
             target_result = face_services.detector.detect_faces(target_img)
-            if not target_result.success:
-                return jsonify({"error": f"No face detected in target image: {target_result.error_message}"}), 400
+
+            # If no face detected in either image, return target image
+            if not face_result.success or not target_result.success:
+                logger.warning(f"Face detection failed - face_result: {face_result.success}, target_result: {target_result.success}. Returning target image.")
+                # Return target image directly
+                return send_file(
+                    target_path,
+                    mimetype='image/jpeg',
+                    as_attachment=False
+                )
 
             # Perform face swap
             source_face = face_result.faces[0]
@@ -738,7 +743,13 @@ def swapface_url_api():
             swapped_img = face_services.swapper.swap_faces(source_face, target_img, target_face)
 
             if swapped_img is None:
-                return jsonify({"error": "Face swap failed"}), 500
+                logger.warning("Face swap failed, returning target image")
+                # Return target image if swap fails
+                return send_file(
+                    target_path,
+                    mimetype='image/jpeg',
+                    as_attachment=False
+                )
 
             # Save result
             output_uuid = str(uuid.uuid4())
@@ -746,7 +757,13 @@ def swapface_url_api():
             success = cv2.imwrite(output_path, swapped_img)
 
             if not success:
-                return jsonify({"error": "Failed to save result image"}), 500
+                logger.warning("Failed to save result image, returning target image")
+                # Return target image if save fails
+                return send_file(
+                    target_path,
+                    mimetype='image/jpeg',
+                    as_attachment=False
+                )
 
             # Cache the swap result
             with cache_lock:
@@ -756,7 +773,7 @@ def swapface_url_api():
                 }
             logger.info(f"Cached swap result for pair {face_url[:30]}... + {target_url[:30]}...: {output_path}")
 
-            logger.info(f"Face swap completed successfully: {output_path}")
+            logger.info("Face swap completed successfully")
 
             # Return image data directly for embedding in img src
             return send_file(
