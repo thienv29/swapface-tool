@@ -7,7 +7,8 @@ import os
 import aiofiles
 import asyncio
 import uuid
-from flask import Blueprint, request, jsonify, Response
+import requests
+from flask import Blueprint, request, jsonify, Response, send_file
 from flask_httpauth import HTTPBasicAuth
 from typing import List, Tuple, Dict, Any, Optional
 import cv2
@@ -488,3 +489,177 @@ def download_file(filename):
     except Exception as e:
         logger.error(f"Error downloading file {filepath}: {e}")
         return jsonify({"error": "Error downloading file"}), 500
+
+
+@api_bp.route("/swapface-url", methods=["GET"])
+def swapface_url_api():
+    """Handle face swap requests with URL inputs."""
+    try:
+        # Get URL parameters from request
+        face_url = request.args.get("face")
+        target_url = request.args.get("target")
+
+        if not face_url or not target_url:
+            return jsonify({"error": "Both 'face' and 'target' URL parameters are required"}), 400
+
+        logger.info(f"Processing face swap from URLs: face={face_url[:50]}..., target={target_url[:50]}...")
+
+        # Download images from URLs
+        def download_image(url: str, filename: str, max_retries: int = 3, base_delay: float = 1.0) -> str:
+            """Download image from URL and save to temp directory with retry logic."""
+            import random
+            import time
+
+            last_exception = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    logger.info(f"Attempting to download {url} (attempt {attempt + 1}/{max_retries + 1})")
+
+                    response = requests.get(url, timeout=30, stream=True)
+                    response.raise_for_status()
+
+                    # Check content type
+                    content_type = response.headers.get('content-type', '').lower()
+                    if not content_type.startswith('image/'):
+                        raise ValueError(f"URL does not point to an image: {content_type}")
+
+                    # Get file size
+                    content_length = response.headers.get('content-length')
+                    if content_length:
+                        size_mb = int(content_length) / (1024 * 1024)
+                        if size_mb > 50:  # 50MB limit for URL downloads
+                            raise ValueError(f"Image too large: {size_mb:.1f}MB")
+
+                    file_uuid = str(uuid.uuid4())
+                    file_path = f"{config.temp_directory}/{file_uuid}_{filename}"
+
+                    with open(file_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+
+                    # Verify the downloaded file is a valid image
+                    img = cv2.imread(file_path)
+                    if img is None:
+                        os.remove(file_path)
+                        raise ValueError("Downloaded file is not a valid image")
+
+                    logger.info(f"Downloaded and saved image: {file_path}")
+                    return file_path
+
+                except requests.exceptions.HTTPError as e:
+                    # Check if it's a 429 error (rate limit)
+                    if response.status_code == 429:
+                        if attempt < max_retries:
+                            # Exponential backoff with jitter
+                            delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                            logger.warning(".2f")
+                            time.sleep(delay)
+                            continue
+                        else:
+                            logger.error(f"Failed to download after {max_retries + 1} attempts due to rate limiting: {url}")
+                            raise ValueError(f"Failed to download image: {response.status_code} Client Error for url: {url}")
+                    else:
+                        # For other HTTP errors, don't retry
+                        raise
+                except (requests.exceptions.RequestException, ValueError) as e:
+                    # For network errors (timeouts, connection errors) or validation errors, retry
+                    last_exception = e
+                    if attempt < max_retries:
+                        # Exponential backoff with jitter for network errors
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        logger.warning(".2f")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Failed to download after {max_retries + 1} attempts: {url}, error: {e}")
+                        if isinstance(e, requests.exceptions.HTTPError):
+                            raise
+                        else:
+                            raise ValueError(f"Failed to download image: {str(e)}")
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        logger.warning(".2f")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Failed to download after {max_retries + 1} attempts: {url}, error: {e}")
+                        raise ValueError(f"Failed to download image: {str(e)}")
+
+            # This should never be reached, but just in case
+            raise ValueError(f"Failed to download image after all retries: {str(last_exception)}")
+
+        # Download face image
+        face_filename = "face_" + face_url.split('/')[-1].split('?')[0] or "face.jpg"
+        face_path = download_image(face_url, face_filename)
+
+        # Download target image
+        target_filename = "target_" + target_url.split('/')[-1].split('?')[0] or "target.jpg"
+        target_path = download_image(target_url, target_filename)
+
+        try:
+            # Load and validate images
+            face_img = cv2.imread(face_path)
+            target_img = cv2.imread(target_path)
+
+            if face_img is None:
+                return jsonify({"error": "Cannot read face image"}), 400
+
+            if target_img is None:
+                return jsonify({"error": "Cannot read target image"}), 400
+
+            # Detect faces
+            face_result = face_services.detector.detect_faces(face_img)
+            if not face_result.success:
+                return jsonify({"error": f"No face detected in face image: {face_result.error_message}"}), 400
+
+            target_result = face_services.detector.detect_faces(target_img)
+            if not target_result.success:
+                return jsonify({"error": f"No face detected in target image: {target_result.error_message}"}), 400
+
+            # Perform face swap
+            source_face = face_result.faces[0]
+            target_face = target_result.faces[0]
+
+            swapped_img = face_services.swapper.swap_faces(source_face, target_img, target_face)
+
+            if swapped_img is None:
+                return jsonify({"error": "Face swap failed"}), 500
+
+            # Save result
+            output_uuid = str(uuid.uuid4())
+            output_path = f"{config.output_directory}/{output_uuid}.jpg"
+            success = cv2.imwrite(output_path, swapped_img)
+
+            if not success:
+                return jsonify({"error": "Failed to save result image"}), 500
+
+            logger.info(f"Face swap completed successfully: {output_path}")
+
+            # Return image data directly for embedding in img src
+            return send_file(
+                output_path,
+                mimetype='image/jpeg',
+                as_attachment=False
+            )
+
+        finally:
+            # Cleanup temp files
+            try:
+                if os.path.exists(face_path):
+                    os.remove(face_path)
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup temp files: {e}")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Network error during URL processing: {e}")
+        return jsonify({"error": f"Failed to download image: {str(e)}"}), 400
+    except ValueError as e:
+        logger.error(f"Validation error: {e}")
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"Unexpected error in swapface-url: {e}")
+        return jsonify({"error": "Internal server error occurred"}), 500

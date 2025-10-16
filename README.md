@@ -167,6 +167,92 @@ For video:
 curl -X POST -F "source=@source.mp4" -F "target=@target.jpg" http://localhost:8000/swapface
 ```
 
+### 4. URL-based API (New in v2.0)
+
+**GET** `/swapface-url`
+
+Swap faces using direct image URLs and return image data directly for use in `<img>` tags.
+
+#### Request
+- Method: GET
+- Query Parameters:
+  - `face`: URL of the source face image
+  - `target`: URL of the target image
+
+#### Response
+- Success: Direct image data (JPEG) with `Content-Type: image/jpeg`
+- Error: JSON `{"error": "error message"}`
+
+#### Example usage
+
+Directly in HTML img tag:
+```html
+<img src="http://localhost:8000/swapface-url?face=https://example.com/face.jpg&target=https://example.com/person.jpg" alt="Swapped face" />
+```
+
+#### JavaScript example
+```javascript
+// Use directly as img src
+const img = document.createElement('img');
+img.src = `http://localhost:8000/swapface-url?face=${encodeURIComponent(faceUrl)}&target=${encodeURIComponent(targetUrl)}`;
+document.body.appendChild(img);
+```
+
+#### Python example
+```python
+import requests
+
+# Face swap with URLs
+params = {
+    'face': 'https://example.com/face.jpg',
+    'target': 'https://example.com/person.jpg'
+}
+
+response = requests.get('http://localhost:8000/swapface-url', params=params)
+result = response.json()
+
+if result['success']:
+    print(f"Swapped image available at: {result['result_url']}")
+```
+
+#### HTML example
+```html
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Face Swap Demo</title>
+    <script>
+        async function swapFaces() {
+            const faceUrl = document.getElementById('faceUrl').value;
+            const targetUrl = document.getElementById('targetUrl').value;
+
+            try {
+                const response = await fetch(`/swapface-url?face=${encodeURIComponent(faceUrl)}&target=${encodeURIComponent(targetUrl)}`);
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('result').src = result.result_url;
+                    document.getElementById('result').style.display = 'block';
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+    </script>
+</head>
+<body>
+    <h1>Face Swap with URLs</h1>
+    <input type="text" id="faceUrl" placeholder="Face image URL" value="https://example.com/face.jpg">
+    <input type="text" id="targetUrl" placeholder="Target image URL" value="https://example.com/person.jpg">
+    <button onclick="swapFaces()">Swap Face</button>
+    <br><br>
+    <img id="result" style="display:none; max-width:500px;">
+</body>
+</html>
+```
+
 ## How it works
 
 1. Detects faces in both source and target using InsightFace
