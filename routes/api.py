@@ -504,11 +504,92 @@ def swapface_url_api():
 
         logger.info(f"Processing face swap from URLs: face={face_url[:50]}..., target={target_url[:50]}...")
 
-        # Download images from URLs
+        # Global caches
+        url_cache = {}  # url -> {"file_path": str, "timestamp": float, "filename": str}
+        swap_cache = {}  # pair_key -> {"output_path": str, "timestamp": float}
+        cache_lock = threading.Lock()
+
+        def get_cache_key(url: str) -> str:
+            """Generate a cache key for URL."""
+            import hashlib
+            return hashlib.md5(url.encode()).hexdigest()
+
+        def get_swap_cache_key(face_url: str, target_url: str) -> str:
+            """Generate a cache key for face swap pair."""
+            import hashlib
+            pair_string = f"{face_url}|{target_url}"
+            return hashlib.md5(pair_string.encode()).hexdigest()
+
+        def cleanup_url_cache(max_age_hours: int = 24):
+            """Clean up old cache entries."""
+            current_time = time.time()
+            expired_keys = []
+
+            with cache_lock:
+                # Clean up URL cache
+                for key, cache_info in url_cache.items():
+                    if current_time - cache_info["timestamp"] > max_age_hours * 3600:
+                        expired_keys.append(key)
+                        # Remove the cached file
+                        try:
+                            if os.path.exists(cache_info["file_path"]):
+                                os.remove(cache_info["file_path"])
+                                logger.info(f"Removed expired cached file: {cache_info['file_path']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove expired cache file: {e}")
+
+                # Remove expired entries from URL cache
+                for key in expired_keys:
+                    del url_cache[key]
+
+                expired_keys = []
+
+                # Clean up swap cache
+                for key, cache_info in swap_cache.items():
+                    if current_time - cache_info["timestamp"] > max_age_hours * 3600:
+                        expired_keys.append(key)
+                        # Remove the cached swap result
+                        try:
+                            if os.path.exists(cache_info["output_path"]):
+                                os.remove(cache_info["output_path"])
+                                logger.info(f"Removed expired cached swap result: {cache_info['output_path']}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove expired swap cache file: {e}")
+
+                # Remove expired entries from swap cache
+                for key in expired_keys:
+                    del swap_cache[key]
+
+                logger.info(f"Cleaned up {len(expired_keys)} expired swap cache entries")
+
+        # Download images from URLs with caching
         def download_image(url: str, filename: str, max_retries: int = 3, base_delay: float = 1.0) -> str:
-            """Download image from URL and save to temp directory with retry logic."""
+            """Download image from URL and save to temp directory with retry logic and caching."""
             import random
-            import time
+            import hashlib
+
+            cache_key = get_cache_key(url)
+
+            # Check cache first
+            with cache_lock:
+                if cache_key in url_cache:
+                    cache_info = url_cache[cache_key]
+                    # Check if cached file still exists and is not too old (24 hours)
+                    if (os.path.exists(cache_info["file_path"]) and
+                        time.time() - cache_info["timestamp"] < 24 * 3600):
+
+                        # Copy cached file to new location for this request
+                        new_uuid = str(uuid.uuid4())
+                        new_path = f"{config.temp_directory}/{new_uuid}_{cache_info['filename']}"
+
+                        try:
+                            import shutil
+                            shutil.copy2(cache_info["file_path"], new_path)
+                            logger.info(f"Using cached image for {url}: {new_path}")
+                            return new_path
+                        except Exception as e:
+                            logger.warning(f"Failed to copy from cache, downloading fresh: {e}")
+                            # Fall through to download
 
             last_exception = None
 
@@ -544,6 +625,22 @@ def swapface_url_api():
                     if img is None:
                         os.remove(file_path)
                         raise ValueError("Downloaded file is not a valid image")
+
+                    # Cache the successful download
+                    cache_file_uuid = str(uuid.uuid4())
+                    cache_file_path = f"{config.temp_directory}/cache_{cache_file_uuid}_{filename}"
+                    try:
+                        import shutil
+                        shutil.copy2(file_path, cache_file_path)
+                        with cache_lock:
+                            url_cache[cache_key] = {
+                                "file_path": cache_file_path,
+                                "timestamp": time.time(),
+                                "filename": filename
+                            }
+                        logger.info(f"Cached downloaded image: {cache_file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to cache file: {e}")
 
                     logger.info(f"Downloaded and saved image: {file_path}")
                     return file_path
@@ -590,6 +687,22 @@ def swapface_url_api():
             # This should never be reached, but just in case
             raise ValueError(f"Failed to download image after all retries: {str(last_exception)}")
 
+        # Check if swap result is cached
+        swap_cache_key = get_swap_cache_key(face_url, target_url)
+        with cache_lock:
+            if swap_cache_key in swap_cache:
+                cache_info = swap_cache[swap_cache_key]
+                # Check if cached result still exists and is not too old (24 hours)
+                if (os.path.exists(cache_info["output_path"]) and
+                    time.time() - cache_info["timestamp"] < 24 * 3600):
+
+                    logger.info(f"Using cached swap result for pair {face_url[:30]}... + {target_url[:30]}...: {cache_info['output_path']}")
+                    return send_file(
+                        cache_info["output_path"],
+                        mimetype='image/jpeg',
+                        as_attachment=False
+                    )
+
         # Download face image
         face_filename = "face_" + face_url.split('/')[-1].split('?')[0] or "face.jpg"
         face_path = download_image(face_url, face_filename)
@@ -634,6 +747,14 @@ def swapface_url_api():
 
             if not success:
                 return jsonify({"error": "Failed to save result image"}), 500
+
+            # Cache the swap result
+            with cache_lock:
+                swap_cache[swap_cache_key] = {
+                    "output_path": output_path,
+                    "timestamp": time.time()
+                }
+            logger.info(f"Cached swap result for pair {face_url[:30]}... + {target_url[:30]}...: {output_path}")
 
             logger.info(f"Face swap completed successfully: {output_path}")
 
