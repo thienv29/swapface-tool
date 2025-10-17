@@ -597,7 +597,7 @@ def swapface_url_api():
                 try:
                     logger.info(f"Attempting to download {url} (attempt {attempt + 1}/{max_retries + 1})")
 
-                    response = requests.get(url, timeout=30, stream=True)
+                    response = requests.get(url, timeout=30, stream=True, verify=False)
                     response.raise_for_status()
 
                     # Check content type
