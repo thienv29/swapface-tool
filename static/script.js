@@ -3,7 +3,19 @@ function handleSingleFileSelect(input, preview) {
   const file = input.files[0];
   if (!file) return;
 
+  // Check file size - for large files (>50MB), skip preview to prevent browser hanging
+  const MAX_PREVIEW_SIZE = 50 * 1024 * 1024; // 50MB
+  const fileSizeMB = file.size / (1024 * 1024);
+  const isLargeFile = file.size > MAX_PREVIEW_SIZE;
+
   const reader = new FileReader();
+
+  // If file is too large, show file info without loading preview
+  if (isLargeFile) {
+    handleLargeFilePreview(file, preview, input.id, true);
+    return;
+  }
+
   reader.onload = function(e) {
     const isVideo = file.type.startsWith('video/');
     const isImage = file.type.startsWith('image/');
@@ -33,6 +45,32 @@ function handleSingleFileSelect(input, preview) {
   reader.readAsDataURL(file);
 }
 
+function handleLargeFilePreview(file, preview, inputId, isSingle = false) {
+  const fileSizeMB = file.size / (1024 * 1024);
+  const isVideo = file.type.startsWith('video/');
+  const isImage = file.type.startsWith('image/');
+
+  let previewContent = `
+    <button class="remove-file" onclick="removeFile('${inputId}')">
+      <i class="fas fa-times"></i>
+    </button>
+    <div class="large-file-warning">
+      <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon-large"></i>
+      <div class="file-info ${isSingle ? 'single' : ''}">
+        <span class="file-name">${file.name}</span>
+        <span class="file-size">(${fileSizeMB.toFixed(1)} MB)</span>
+      </div>
+      <div class="preview-note">Preview skipped for large file</div>
+    </div>
+  `;
+
+  preview.innerHTML = previewContent;
+  preview.style.display = 'block';
+  if (!isSingle) {
+    updateSwapButton();
+  }
+}
+
 function handleMultipleFilesSelect(input, preview) {
   const files = Array.from(input.files);
   if (files.length === 0) return;
@@ -51,17 +89,25 @@ function handleMultipleFilesSelect(input, preview) {
   let fileContents = new Array(filesToPreview.length);
 
   filesToPreview.forEach((file, index) => {
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const isVideo = file.type.startsWith('video/');
-      const isImage = file.type.startsWith('image/');
+    // Check if this file is too large for preview (>50MB)
+    const MAX_PREVIEW_SIZE = 50 * 1024 * 1024; // 50MB
+    const isLargeFile = file.size > MAX_PREVIEW_SIZE;
+    const fileSizeMB = file.size / (1024 * 1024);
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
 
+    if (isLargeFile) {
+      // For large files, show file info without loading preview
       fileContents[index] = `
-        <div class="file-item">
-          ${isVideo ?
-            `<video src="${e.target.result}" class="preview-image"></video>` :
-            `<img src="${e.target.result}" alt="${file.name}" class="preview-image">`
-          }
+        <div class="file-item large-file-item">
+          <div class="large-file-warning">
+            <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon-large"></i>
+            <div class="file-info">
+              <span class="file-name">${file.name}</span>
+              <span class="file-size">(${fileSizeMB.toFixed(1)} MB)</span>
+            </div>
+            <div class="preview-note">Preview skipped</div>
+          </div>
           <div class="file-info">
             <button class="remove-single-file" onclick="removeSingleFile('${input.id}', '${file.name}')">
               <i class="fas fa-times"></i>
@@ -73,36 +119,10 @@ function handleMultipleFilesSelect(input, preview) {
 
       loadedCount++;
       if (loadedCount === filesToPreview.length) {
-        // All files loaded, now generate final preview content
         let finalContent = previewContent;
         fileContents.forEach(content => {
           finalContent += content;
         });
-
-        // Add "and X more..." if there are remaining files
-        if (remainingCount > 0) {
-          finalContent += `
-            <div class="file-item more-files">
-              <div class="more-files-content">
-                <i class="fas fa-plus-circle"></i>
-                <span>${remainingCount} more files</span>
-              </div>
-            </div>`;
-        }
-
-        preview.innerHTML = finalContent;
-        preview.style.display = 'block';
-        updateSwapButton();
-      }
-    };
-    reader.onerror = function(e) {
-      console.error(`Error loading file ${file.name}:`, e);
-      loadedCount++;
-      if (loadedCount === filesToPreview.length) {
-        let finalContent = previewContent;
-        fileContents.forEach(content => {
-          if (content) finalContent += content;
-        });
         if (remainingCount > 0) {
           finalContent += `
             <div class="file-item more-files">
@@ -116,8 +136,87 @@ function handleMultipleFilesSelect(input, preview) {
         preview.style.display = 'block';
         updateSwapButton();
       }
-    };
-    reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        fileContents[index] = `
+          <div class="file-item">
+            ${isVideo ?
+              `<video src="${e.target.result}" class="preview-image"></video>` :
+              `<img src="${e.target.result}" alt="${file.name}" class="preview-image">`
+            }
+            <div class="file-info">
+              <button class="remove-single-file" onclick="removeSingleFile('${input.id}', '${file.name}')">
+                <i class="fas fa-times"></i>
+              </button>
+              <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon"></i>
+              <span class="file-name">${file.name}</span>
+            </div>
+          </div>`;
+
+        loadedCount++;
+        if (loadedCount === filesToPreview.length) {
+          let finalContent = previewContent;
+          fileContents.forEach(content => {
+            finalContent += content;
+          });
+          if (remainingCount > 0) {
+            finalContent += `
+              <div class="file-item more-files">
+                <div class="more-files-content">
+                  <i class="fas fa-plus-circle"></i>
+                  <span>${remainingCount} more files</span>
+                </div>
+              </div>`;
+          }
+          preview.innerHTML = finalContent;
+          preview.style.display = 'block';
+          updateSwapButton();
+        }
+      };
+      reader.onerror = function(e) {
+        console.error(`Error loading file ${file.name}:`, e);
+        // Still show the file but without preview
+        fileContents[index] = `
+          <div class="file-item error-file-item">
+            <div class="error-file-placeholder">
+              <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon-large"></i>
+              <div class="file-info">
+                <span class="file-name">${file.name}</span>
+              </div>
+              <div class="preview-note">Preview failed</div>
+            </div>
+            <div class="file-info">
+              <button class="remove-single-file" onclick="removeSingleFile('${input.id}', '${file.name}')">
+                <i class="fas fa-times"></i>
+              </button>
+              <i class="fas fa-file-${isVideo ? 'video' : 'image'} file-icon"></i>
+              <span class="file-name">${file.name}</span>
+            </div>
+          </div>`;
+
+        loadedCount++;
+        if (loadedCount === filesToPreview.length) {
+          let finalContent = previewContent;
+          fileContents.forEach(content => {
+            finalContent += content;
+          });
+          if (remainingCount > 0) {
+            finalContent += `
+              <div class="file-item more-files">
+                <div class="more-files-content">
+                  <i class="fas fa-plus-circle"></i>
+                  <span>${remainingCount} more files</span>
+                </div>
+              </div>`;
+          }
+          preview.innerHTML = finalContent;
+          preview.style.display = 'block';
+          updateSwapButton();
+        }
+      };
+      reader.readAsDataURL(file);
+    }
   });
 }
 

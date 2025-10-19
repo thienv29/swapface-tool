@@ -27,7 +27,7 @@ class FileProcessor:
     def __init__(self, config: Config):
         self.config = config
 
-    def save_uploaded_file(self, file, filename: str, max_size_mb: float = 500.0) -> str:
+    def save_uploaded_file(self, file, filename: str, max_size_mb: float = 20000.0) -> str:
         """Save uploaded file to temporary location with size validation and streaming for large files."""
         # Validate file size before starting upload
         file.seek(0, 2)  # Seek to end
@@ -43,14 +43,20 @@ class FileProcessor:
 
         # Use streaming approach for better memory efficiency with large files
         try:
-            if file_size > 50 * 1024 * 1024:  # Log progress for files > 50MB
-                logger.info(f"Saving large file ({file_size / 1024 / 1024:.1f}MB): {filename}")
+            file_size_gb = file_size / (1024 * 1024 * 1024)
+            if file_size > 100 * 1024 * 1024:  # Log progress for files > 100MB
+                if file_size_gb >= 1:
+                    logger.info(f"Saving large file ({file_size_gb:.1f}GB): {filename}")
+                else:
+                    logger.info(f"Saving large file ({file_size / 1024 / 1024:.1f}MB): {filename}")
 
-            # For very large files, use chunked reading to save memory
-            if file_size > 100 * 1024 * 1024:  # >100MB files use chunked reading
+            # For large files, always use chunked reading to prevent memory issues
+            if file_size > 10 * 1024 * 1024:  # >10MB files use optimized chunked reading
                 with open(file_path, 'wb') as out_file:
-                    chunk_size = 8192  # 8KB chunks
+                    chunk_size = 128 * 1024  # 128KB chunks for better throughput
                     bytes_read = 0
+                    last_progress_log = 0
+
                     while bytes_read < file_size:
                         remaining = file_size - bytes_read
                         read_size = min(chunk_size, remaining)
@@ -59,6 +65,14 @@ class FileProcessor:
                             break
                         out_file.write(chunk)
                         bytes_read += len(chunk)
+
+                        # Log progress for very large files every 10%
+                        if file_size > 1024 * 1024 * 1024:  # >1GB
+                            progress_percentage = (bytes_read / file_size) * 100
+                            progress_step = int(progress_percentage // 10) * 10
+                            if progress_step > last_progress_log:
+                                logger.info(f"Upload progress for {filename}: {progress_step}% complete")
+                                last_progress_log = progress_step
             else:
                 # For smaller files, use the standard method
                 file.save(file_path)
@@ -69,7 +83,10 @@ class FileProcessor:
                 if saved_size != file_size:
                     logger.warning(f"File size mismatch: expected {file_size}, got {saved_size}")
                 else:
-                    logger.info(f"File saved successfully: {file_path} ({saved_size / 1024 / 1024:.1f}MB)")
+                    if file_size_gb >= 1:
+                        logger.info(f"File saved successfully: {file_path} ({file_size_gb:.1f}GB)")
+                    else:
+                        logger.info(f"File saved successfully: {file_path} ({saved_size / 1024 / 1024:.1f}MB)")
             else:
                 raise IOError(f"Failed to save file: {file_path}")
 

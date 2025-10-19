@@ -60,7 +60,7 @@ progress_lock = threading.Lock()
 api_bp = Blueprint('api', __name__)
 
 
-def _extract_file_list(files, max_total_size_mb: float = 2000.0, upload_id: Optional[str] = None, progress_lock=None):
+def _extract_file_list(files, max_total_size_mb: float = 20000.0, upload_id: Optional[str] = None, progress_lock=None):
     """Extract uploaded files and their filenames with size validation and progress tracking."""
     target_files = []
     target_filenames = []
