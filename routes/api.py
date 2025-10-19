@@ -953,6 +953,28 @@ def get_status():
         return jsonify({"error": f"Status API error: {str(e)}"}), 500
 
 
+@api_bp.route("/cancel", methods=["POST"])
+@auth.login_required
+def cancel_processing():
+    """Cancel ongoing face swap processing."""
+    try:
+        if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
+            logger.info("Cancelling ongoing processing...")
+            success = batch_processor.cancel_processing()
+            if success:
+                logger.info("Processing cancelled successfully")
+                return jsonify({"message": "Processing cancelled successfully"}), 200
+            else:
+                logger.warning("Failed to cancel processing")
+                return jsonify({"error": "Failed to cancel processing"}), 500
+        else:
+            return jsonify({"error": "No processing is currently running"}), 400
+
+    except Exception as e:
+        logger.error(f"Cancel API error: {e}")
+        return jsonify({"error": f"Cancel API error: {str(e)}"}), 500
+
+
 @api_bp.route("/view/<path:filename>")
 @auth.login_required
 def view_file(filename):

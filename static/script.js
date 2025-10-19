@@ -457,6 +457,9 @@ let processingStartTime = null;
 let tusUpload = null;
 let tusProgressInterval = null;
 
+// Global variable for cancel functionality
+let cancelRequested = false;
+
 // Function to handle status polling during processing
 function startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv) {
   statusPollingInterval = setInterval(async () => {
@@ -687,10 +690,54 @@ async function uploadFileWithTus(file, fileType, onProgress) {
   });
 }
 
+// Cancel button functionality
+document.getElementById('cancelButton').addEventListener('click', async () => {
+  const cancelButton = document.getElementById('cancelButton');
+  const progressText = document.getElementById('progressText');
+
+  // Disable cancel button to prevent multiple clicks
+  cancelButton.disabled = true;
+  cancelButton.innerHTML = '<span class="loading-spinner"></span> Đang Hủy...';
+
+  try {
+    const response = await fetch('/cancel', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+      }
+    });
+
+    if (response.ok) {
+      progressText.textContent = 'Đã hủy xử lý... Đang dừng...';
+      console.log('Cancel request sent successfully');
+
+      // The status polling will handle showing the cancelled state
+    } else {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      console.error('Cancel failed:', errorData.error);
+      progressText.textContent = 'Không thể hủy xử lý. Vui lòng đợi hoàn tất.';
+
+      // Re-enable cancel button
+      cancelButton.disabled = false;
+      cancelButton.innerHTML = '<i class="fas fa-times"></i> Hủy xử lý';
+    }
+  } catch (error) {
+    console.error('Cancel request error:', error);
+    progressText.textContent = 'Lỗi khi hủy xử lý. Vui lòng đợi hoàn tất.';
+
+    // Re-enable cancel button
+    cancelButton.disabled = false;
+    cancelButton.innerHTML = '<i class="fas fa-times"></i> Hủy xử lý';
+  }
+});
+
 // Form submission with Tus resumable upload
 const form = document.getElementById("swapForm");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+
+  // Reset cancel flag
+  cancelRequested = false;
 
   const button = document.getElementById('swapButton');
   const resultDiv = document.getElementById("result");
@@ -701,6 +748,7 @@ form.addEventListener("submit", async (e) => {
   const processingSpeedDiv = document.getElementById("processingSpeed");
   const queueInfoDiv = document.getElementById("queueInfo");
   const queueDetailsDiv = document.getElementById("queueDetails");
+  const cancelButton = document.getElementById('cancelButton');
 
   // Reset UI
   resultDiv.style.display = 'none';
@@ -711,6 +759,11 @@ form.addEventListener("submit", async (e) => {
   button.disabled = true;
   button.innerHTML = '<span class="loading-spinner"></span> Đang Tải Lên...';
 
+  // Enable cancel button and show it
+  cancelButton.disabled = false;
+  cancelButton.innerHTML = '<i class="fas fa-times"></i> Hủy xử lý';
+  cancelButton.style.display = 'inline-flex';
+
   // Reset progress
   progressFill.style.width = '0%';
   progressText.textContent = 'Đang chuẩn bị upload...';
@@ -720,6 +773,9 @@ form.addEventListener("submit", async (e) => {
 
   processingStartTime = Date.now();
   let uploadId = null;
+
+  // Reset cancel flag at the beginning of new processing
+  cancelRequested = false;
 
   try {
     const sourceFile = document.getElementById('sourceInput').files[0];

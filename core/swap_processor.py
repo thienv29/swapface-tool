@@ -336,7 +336,8 @@ class SwapProcessor:
         source_face_cache,
         target_path: str,
         target_filename: str,
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        cancellation_callback: Optional[Callable[[], bool]] = None
     ) -> SwapResult:
         """Process a single video file with audio preservation."""
         try:
@@ -379,7 +380,8 @@ class SwapProcessor:
                     target_path,
                     output_path,
                     swap_callback,
-                    progress_callback
+                    progress_callback,
+                    cancellation_callback
                 )
             else:
                 # Regular video with audio preservation
@@ -415,7 +417,8 @@ class SwapProcessor:
                     target_path,
                     output_path,
                     swap_callback,
-                    progress_callback
+                    progress_callback,
+                    cancellation_callback
                 )
 
             if success:
@@ -534,10 +537,24 @@ class BatchProcessor:
         self.config = config
         self.swap_processor = swap_processor
         self.processing_progress: Optional[ProcessingProgress] = None
+        self.cancel_flag = False
+        self.processing_thread: Optional[threading.Thread] = None
+
+    def is_cancelled(self) -> bool:
+        """Check if processing has been cancelled."""
+        return self.cancel_flag
 
     def get_progress(self) -> Optional[ProcessingProgress]:
         """Get current processing progress."""
         return self.processing_progress
+
+    def cancel_processing(self) -> bool:
+        """Cancel ongoing processing."""
+        if self.processing_progress and not self.processing_progress.is_complete:
+            logger.info("Setting cancel flag for ongoing processing")
+            self.cancel_flag = True
+            return True
+        return False
 
     def start_background_processing(
         self,
@@ -647,6 +664,20 @@ class BatchProcessor:
 
             # Process each target
             for i, (target_path, target_filename) in enumerate(zip(target_paths, target_filenames)):
+                # Check for cancellation before processing each file
+                if self.cancel_flag:
+                    logger.info(f"Cancellation detected before processing {target_filename}, stopping...")
+                    # Mark remaining files as cancelled
+                    for j in range(i, len(target_filenames)):
+                        remaining_filename = target_filenames[j]
+                        self._update_file_progress(remaining_filename, "cancelled")
+                        results.append(SwapResult(
+                            success=False,
+                            error_message="Processing cancelled by user",
+                            original_name=remaining_filename
+                        ))
+                    break
+
                 logger.info(f"Processing {i+1}/{len(target_paths)}: {target_filename}")
 
                 # Update progress: mark as processing
@@ -764,7 +795,7 @@ class BatchProcessor:
 
             logger.info(f"Starting video processing: {target_filename}")
             result = self.swap_processor.process_video_with_audio(
-                source_face_cache, target_path, target_filename, video_progress_callback
+                source_face_cache, target_path, target_filename, video_progress_callback, self.is_cancelled
             )
 
             if result.success:

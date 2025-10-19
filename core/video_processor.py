@@ -170,6 +170,20 @@ class VideoProcessor:
             logger.info(f"Video info - FPS: {fps}, Size: {frame_width}x{frame_height}, Frames: {total_frames}")
 
             while True:
+                # Check for cancellation before reading each frame
+                if cancellation_callback and cancellation_callback():
+                    logger.info("Video processing cancelled by user")
+                    cap.release()
+                    if 'out' in locals():
+                        out.release()
+                    # Clean up the temp video file if it exists
+                    if 'temp_video_path' in locals() and os.path.exists(temp_video_path):
+                        try:
+                            os.remove(temp_video_path)
+                        except Exception as cleanup_e:
+                            logger.warning(f"Failed to cleanup temp video file during cancellation: {cleanup_e}")
+                    return False  # Return False to indicate cancellation
+
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -224,7 +238,8 @@ class VideoProcessor:
         video_path: str,
         output_path: str,
         face_swap_callback: Callable[[np.ndarray], np.ndarray],
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        cancellation_callback: Optional[Callable[[], bool]] = None
     ) -> bool:
         """Process video with face swapping while preserving audio."""
         try:
@@ -256,6 +271,20 @@ class VideoProcessor:
             logger.info(f"Video info - FPS: {fps}, Size: {frame_width}x{frame_height}, Frames: {total_frames}")
 
             while True:
+                # Check for cancellation before reading each frame
+                if cancellation_callback and cancellation_callback():
+                    logger.info("Video processing cancelled by user")
+                    cap.release()
+                    if 'out' in locals():
+                        out.release()
+                    # Clean up the temp video file if it exists
+                    if os.path.exists(temp_video_path):
+                        try:
+                            os.remove(temp_video_path)
+                        except Exception as cleanup_e:
+                            logger.warning(f"Failed to cleanup temp video file during cancellation: {cleanup_e}")
+                    return False  # Return False to indicate cancellation
+
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -330,7 +359,8 @@ class VideoProcessor:
         video_path: str,
         output_path: str,
         face_swap_callback: Callable[[np.ndarray], np.ndarray],
-        progress_callback: Optional[Callable[[int, int], None]] = None
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+        cancellation_callback: Optional[Callable[[], bool]] = None
     ) -> bool:
         """Process video directly to GIF format without audio processing."""
         try:
@@ -352,6 +382,12 @@ class VideoProcessor:
             logger.info(f"Video info - FPS: {fps}, Size: {frame_width}x{frame_height}, Frames: {total_frames}")
 
             while True:
+                # Check for cancellation before reading each frame
+                if cancellation_callback and cancellation_callback():
+                    logger.info("Video processing cancelled by user")
+                    cap.release()
+                    return False  # Return False to indicate cancellation
+
                 ret, frame = cap.read()
                 if not ret:
                     break
