@@ -109,6 +109,12 @@ class ProcessingProgress:
     video_progress: Optional[Dict[str, Any]] = None
     file_progress: Optional[Dict[str, FileProgress]] = None
 
+    # Additional fields for merging files to current batch
+    source_path: Optional[str] = None
+    target_paths: Optional[List[str]] = None
+    target_filenames: Optional[List[str]] = None
+    swap_all_faces: bool = False
+
     def __post_init__(self):
         if self.queue is None:
             self.queue = []

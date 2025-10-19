@@ -632,6 +632,100 @@ def serve_assembled_file(chunk_id: str, filename: str):
         return jsonify({"error": str(e)}), 500
 
 
+@api_bp.route("/add-to-batch", methods=["POST"])
+@auth.login_required
+def add_files_to_current_batch():
+    """Add additional files to currently running batch."""
+    try:
+        logger.info("🛡️ CALLING /add-to-batch API")
+
+        # Check if there are active batch processing
+        if not batch_processor.get_progress() or batch_processor.get_progress().is_complete:
+            logger.error("❌ No active batch processing found")
+            return jsonify({"error": "No active batch processing to add files to"}), 400
+
+        data = request.get_json()
+        logger.info(f"📦 Request data: {data}")
+
+        if not data or 'files' not in data:
+            logger.error("❌ Missing files data")
+            return jsonify({"error": "Missing files data"}), 400
+
+        files = data['files']
+        logger.info(f"📁 Files received: {len(files) if files else 0}")
+
+        if not files or len(files) == 0:
+            logger.error("❌ No files provided (empty list)")
+            return jsonify({"error": "No files provided"}), 400
+
+        # Separate source and target files
+        source_files = [f for f in files if f['type'] == 'source']
+        target_files = [f for f in files if f['type'] == 'target']
+
+        logger.info(f"🌟 Source files: {len(source_files)}, Target files: {len(target_files)}")
+
+        # Log file details
+        for f in files:
+            logger.info(f"   📄 {f['type']}: {f['filename']} - {f['url']}")
+
+        # For merging with active batch, allow 0 source files (use existing source)
+        # or exactly 1 source file (override existing source)
+        if len(source_files) > 1:
+            logger.error(f"❌ Source files count: {len(source_files)} (expected 0 or 1)")
+            return jsonify({"error": "At most one source file allowed for merging"}), 400
+
+        if len(target_files) == 0:
+            logger.error(f"❌ Target files count: {len(target_files)} (expected >=1)")
+            return jsonify({"error": "At least one target file required"}), 400
+
+        # Get source URL - use existing batch source if no new source provided
+        if len(source_files) == 1:
+            source_url = source_files[0]['url']
+            logger.info(f"Using NEW source: {source_url}")
+        else:
+            current_progress = batch_processor.get_progress()
+            source_url = current_progress.source_path
+            logger.info(f"Using EXISTING source from batch: {source_url}")
+
+        target_urls = [f['url'] for f in target_files]
+        target_filenames = [f['filename'] for f in target_files]
+        logger.info(f"Target files to add: {target_filenames}")
+
+        # Note: Source matching check removed - now allows merging with different sources
+        # When merging, new source is used for new files only (existing files keep old source)
+
+        logger.info(f"Adding {len(target_files)} files to current batch")
+
+        # Ensure target files are assembled and get their paths
+        target_assembled_paths = []
+        for i, target_url in enumerate(target_urls):
+            target_chunk_id = target_url.split('/')[-2]
+            target_assembled_path = _assemble_chunks(target_chunk_id)
+            if not target_assembled_path or not os.path.exists(target_assembled_path):
+                logger.error(f"Target file {i} not assembled: chunk_id={target_chunk_id}")
+                return jsonify({"error": f"Target file {i} not assembled properly"}), 400
+            target_assembled_paths.append(target_assembled_path)
+
+        # Add files to current batch
+        success = batch_processor.add_files_to_current_batch(
+            source_url, target_assembled_paths, target_filenames
+        )
+
+        if success:
+            logger.info(f"Successfully added {len(target_files)} files to current batch")
+            return jsonify({
+                "message": "Files added to current batch successfully",
+                "total_new_files": len(target_files),
+                "batch_status": "merged"
+            }), 200
+        else:
+            return jsonify({"error": "Failed to add files to current batch"}), 500
+
+    except Exception as e:
+        logger.error(f"Add to batch error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @api_bp.route("/start-swap", methods=["POST"])
 @auth.login_required
 def start_swap():
@@ -992,6 +1086,8 @@ def cancel_file_processing(filename):
 
         if filename not in progress.cancelled_files:
             progress.cancelled_files.append(filename)
+            # Update file progress status immediately so UI shows cancelled status
+            batch_processor._update_file_progress(filename, "cancelled")
             logger.info(f"Marked file for cancellation: {filename}")
             return jsonify({"message": f"File '{filename}' marked for cancellation"}), 200
         else:

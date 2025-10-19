@@ -927,29 +927,111 @@ form.addEventListener("submit", async (e) => {
     // Get toggle state
     const swapAllFaces = document.getElementById('swapAllFaces').checked;
 
-    // Send file URLs to start processing
-    const response = await fetch('/start-swap', {
-      method: 'POST',
+    // Check if there's ongoing processing - if so, add to current batch
+    let isNewBatch = false;
+    console.log('🔍 Checking for ongoing processing...');
+    const statusResponse = await fetch('/status', {
       headers: {
-        'Content-Type': 'application/json',
         'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
-      },
-      body: JSON.stringify({
-        files: fileUrls,
-        swap_all_faces: swapAllFaces
-      })
+      }
     });
 
-    if (response.ok) {
-      const data = await response.json();
-      uploadId = data.upload_id;
-      console.log('Processing started with ID:', uploadId);
-
-      // Start polling for status
-      startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
+    let addToExistingBatch = false;
+    if (statusResponse.ok) {
+      const statusData = await statusResponse.json();
+      console.log('📊 Status response:', statusData);
+      if (statusData.is_processing) {
+        console.log('📝 Detected ongoing processing, will attempt to add files to current batch');
+        addToExistingBatch = true;
+      } else {
+        console.log('⏸️ No ongoing processing detected');
+      }
     } else {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-      showError(`Không thể bắt đầu xử lý: ${errorData.error || response.statusText}`);
+      console.log('❌ Status check failed:', statusResponse.status);
+    }
+
+    let apiResponse;
+    if (addToExistingBatch) {
+      // Add files to current running batch
+      console.log('Adding files to running batch');
+      apiResponse = await fetch('/add-to-batch', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+        },
+        body: JSON.stringify({
+          files: fileUrls
+        })
+      });
+
+      if (!apiResponse.ok) {
+        // If adding to batch fails, show reason and fallback to starting a new batch
+        const errorData = await apiResponse.json().catch(() => ({ error: 'Unknown error' }));
+        console.warn('Failed to add to current batch:', errorData);
+        console.warn('Starting new batch instead due to:', errorData.error);
+        addToExistingBatch = false;
+      }
+    }
+
+    if (!addToExistingBatch) {
+      // Start new batch processing
+      console.log('Starting new batch processing');
+      isNewBatch = true;
+      apiResponse = await fetch('/start-swap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+        },
+        body: JSON.stringify({
+          files: fileUrls,
+          swap_all_faces: swapAllFaces
+        })
+      });
+    }
+
+    if (apiResponse.ok) {
+      const data = await apiResponse.json();
+
+      if (addToExistingBatch) {
+        console.log(`Files successfully added to existing batch:`, data.message);
+        progressText.textContent = `✅ Đã thêm ${targetFiles.length} file vào batch đang xử lý!`;
+
+        // Immediately fetch new status to update progress bar with merged files
+        try {
+          const statusResponse = await fetch('/status', {
+            headers: { 'Authorization': 'Basic ' + btoa('admin:Thien1lan@123') }
+          });
+          if (statusResponse.ok) {
+            const newStatusData = await statusResponse.json();
+            // Update progress bar with new total count
+            const newPercentage = newStatusData.progress_percentage;
+            progressFill.style.width = newPercentage + '%';
+            progressText.textContent = `Đang xử lý: ${newStatusData.completed}/${newStatusData.total} (${Math.round(newPercentage)}%)`;
+            updateIndividualFileProgress(newStatusData);
+          }
+        } catch (statusError) {
+          console.warn('Could not fetch updated status after merge:', statusError);
+        }
+
+        // Disable upload form after successful merge (prevent duplicate uploads)
+        button.disabled = true;
+        button.innerHTML = 'Đã merge thành công! Đang tiếp tục xử lý...';
+
+        // Continue polling existing status
+        startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
+      } else if (isNewBatch) {
+        uploadId = data.upload_id;
+        console.log('Processing started with ID:', uploadId);
+
+        // Start polling for status
+        startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
+      }
+
+    } else {
+      const errorData = await apiResponse.json().catch(() => ({ error: 'Unknown error' }));
+      showError(`Không thể bắt đầu xử lý: ${errorData.error || apiResponse.statusText}`);
     }
 
   } catch (error) {

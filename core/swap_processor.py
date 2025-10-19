@@ -855,6 +855,79 @@ class BatchProcessor:
 
         return True
 
+    def add_files_to_current_batch(
+        self,
+        source_path: str,
+        additional_target_paths: List[str],
+        additional_target_filenames: List[str],
+        swap_all_faces: bool = False
+    ) -> bool:
+        """Add additional files to the currently running batch."""
+        logger.info(f"🚀 CALLING add_files_to_current_batch with {len(additional_target_filenames)} files")
+
+        if not self.processing_progress or self.processing_progress.is_complete:
+            logger.warning("❌ No active batch to add files to, starting new batch")
+            return self.add_batch_to_queue(source_path, additional_target_paths, additional_target_filenames, swap_all_faces)
+
+        # For merge capability, allow different sources - just warn user
+        logger.info(f"⚠️ Allowing merge with different source (this is intended for flexibility)")
+        logger.info(f"📝 Current source: {getattr(self.processing_progress, 'source_path', 'None')[:50]}...")
+        logger.info(f"📝 New source: {source_path[:50]}...")
+
+        # Add files to current batch
+        current_targets = getattr(self.processing_progress, 'target_paths', [])
+        current_filenames = getattr(self.processing_progress, 'target_filenames', [])
+        current_swap_all_faces = getattr(self.processing_progress, 'swap_all_faces', False)
+
+        logger.info(f"📊 Before merge: {len(current_filenames)} files, adding {len(additional_target_filenames)} files")
+
+        # Extend with new files
+        new_target_paths = current_targets + additional_target_paths
+        new_target_filenames = current_filenames + additional_target_filenames
+
+        # Update batch data
+        self.processing_progress.target_paths = new_target_paths
+        self.processing_progress.target_filenames = new_target_filenames
+        self.processing_progress.total_files = len(new_target_filenames)
+        self.processing_progress.queue.extend(additional_target_filenames)
+
+        logger.info(f"📈 After merge: total_files={self.processing_progress.total_files}, queue_length={len(self.processing_progress.queue)}")
+
+        # Initialize progress for new files
+        from .models import FileProgress
+        for filename, target_path in zip(additional_target_filenames, additional_target_paths):
+            ext = filename.lower().split('.')[-1]
+            file_type = 'video' if ext in ['mp4', 'avi', 'mov', 'mkv', 'gif'] else 'image'
+
+            # For videos, get frame count
+            total_frames = None
+            if file_type == 'video':
+                try:
+                    if os.path.exists(target_path):
+                        _, _, total_frames, _ = self.swap_processor.video_processor.get_video_info(target_path)
+                except Exception as e:
+                    logger.debug(f"Could not get video info for {filename}: {e}")
+
+            self.processing_progress.file_progress[filename] = FileProgress(
+                filename=filename,
+                status="queued",
+                file_type=file_type,
+                total_frames=total_frames,
+                start_time=time.time()
+            )
+            logger.info(f"✅ Added file to progress: {filename}")
+
+        # Save updated state after merging files
+        logger.info("💾 Saving processing state after merge...")
+        try:
+            self.save_processing_state()
+            logger.info("✅ Processing state saved successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to save processing state after merge: {e}")
+
+        logger.info(f"🎉 Successfully added {len(additional_target_filenames)} files to current batch. Final total: {len(new_target_filenames)}")
+        return True
+
     def _start_next_batch_from_queue(self) -> bool:
         """Start processing the next batch from queue."""
         with self.queue_lock:
@@ -872,8 +945,15 @@ class BatchProcessor:
             completed=0,
             queue=target_filenames.copy(),
             start_time=time.time(),
-            results=[]
+            results=[],
+            source_path=source_path,
+            target_paths=target_paths,
+            target_filenames=target_filenames,
+            swap_all_faces=swap_all_faces
         )
+
+        # Reset cancellation state for new batch
+        self.cancel_flag = False
 
         # Save state immediately when starting
         self.save_processing_state()
