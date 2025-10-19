@@ -228,6 +228,9 @@ class SwapProcessor:
                     target_result.faces[0]  # Use first detected face
                 )
 
+                # Log successful swap for image
+                logger.info(f"[SWAP] Image: {target_filename}")
+
                 if swapped is None or swapped.size == 0:
                     logger.warning(f"Face swap failed for {target_filename}, copying as original")
                     # Copy original file to output on swap failure
@@ -343,12 +346,22 @@ class SwapProcessor:
         try:
             logger.info(f"Processing video with audio: {target_filename}")
 
+            # Get total frames for logging
+            total_frames_for_logging = None
+            try:
+                _, _, total_frames_for_logging, _ = self.video_processor.get_video_info(target_path)
+            except Exception as e:
+                logger.debug(f"Could not get frame count for logging: {e}")
+
             output_uuid = str(uuid.uuid4())
 
             # Special handling for GIF files - they have no audio
             if target_filename.lower().endswith('.gif'):
                 logger.info("GIF file detected, processing without audio preservation")
                 output_path = f"{self.config.output_directory}/{output_uuid}.gif"
+
+                # Track frame number for logging
+                frame_index = [0]
 
                 # Define swap callback for video processing
                 def swap_callback(frame):
@@ -366,7 +379,13 @@ class SwapProcessor:
                             frame_result.faces[0]  # Use first detected face
                         )
 
+                        frame_index[0] += 1
                         if result is not None and result.size > 0:
+                            # Log successful swap for video frame
+                            progress_text = f"Frame {frame_index[0]}"
+                            if total_frames_for_logging:
+                                progress_text += f"/{total_frames_for_logging}"
+                            logger.info(f"[SWAP] Video: {target_filename} - {progress_text}")
                             return result
                         else:
                             logger.debug("Face swap returned empty result, using original frame")
@@ -387,6 +406,9 @@ class SwapProcessor:
                 # Regular video with audio preservation
                 output_path = f"{self.config.output_directory}/{output_uuid}.mp4"
 
+                # Track frame number for logging
+                frame_index = [0]
+
                 # Define swap callback for video processing
                 def swap_callback(frame):
                     # Detect faces in current frame
@@ -403,7 +425,13 @@ class SwapProcessor:
                             frame_result.faces[0]  # Use first detected face
                         )
 
+                        frame_index[0] += 1
                         if result is not None and result.size > 0:
+                            # Log successful swap for video frame
+                            progress_text = f"Frame {frame_index[0]}"
+                            if total_frames_for_logging:
+                                progress_text += f"/{total_frames_for_logging}"
+                            logger.info(f"[SWAP] Video: {target_filename} - {progress_text}")
                             return result
                         else:
                             logger.debug("Face swap returned empty result, using original frame")
