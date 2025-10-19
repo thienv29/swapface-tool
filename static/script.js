@@ -1016,8 +1016,10 @@ function updateIndividualFileProgress(statusData) {
       const progressDivItem = document.createElement('div');
       progressDivItem.style.cssText = `
         font-size: 0.85rem;
-        color: ${progress.status === 'completed' ? '#28a745' : progress.status === 'error' ? '#dc3545' : '#007bff'};
+        color: ${progress.status === 'completed' ? '#28a745' : progress.status === 'error' || progress.status === 'cancelled' ? '#dc3545' : '#007bff'};
         font-weight: 500;
+        flex: 1;
+        text-align: right;
       `;
 
       // Format the progress text specially for video
@@ -1027,12 +1029,91 @@ function updateIndividualFileProgress(statusData) {
         displayText = `${percentage}% (${progress.current_frame}/${progress.total_frames} frames)`;
       } else if (progress.file_type === 'image') {
         displayText = progress.progress_text || 'Processing...';
+      } else if (progress.status === 'cancelled') {
+        displayText = 'Cancelled';
       }
 
       progressDivItem.textContent = displayText;
 
-      itemDiv.appendChild(fileNameDiv);
-      itemDiv.appendChild(progressDivItem);
+      // Add cancel file button if file is processing or pending
+      if (progress.status === 'processing' || progress.status === 'pending') {
+        const cancelFileBtn = document.createElement('button');
+        cancelFileBtn.style.cssText = `
+          background: #dc3545;
+          color: white;
+          border: none;
+          border-radius: 50%;
+          width: 24px;
+          height: 24px;
+          cursor: pointer;
+          font-size: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          margin-left: 0.5rem;
+          transition: background 0.2s;
+        `;
+        cancelFileBtn.title = `Cancel ${filename}`;
+        cancelFileBtn.innerHTML = '<i class="fas fa-times"></i>';
+
+        // Add hover effect
+        cancelFileBtn.onmouseover = () => cancelFileBtn.style.background = '#c82333';
+        cancelFileBtn.onmouseout = () => cancelFileBtn.style.background = '#dc3545';
+
+        // Cancel click handler
+        cancelFileBtn.onclick = async () => {
+          try {
+            cancelFileBtn.disabled = true;
+            cancelFileBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            cancelFileBtn.style.cursor = 'not-allowed';
+
+            // URL encode filename
+            const encodedFilename = encodeURIComponent(filename);
+
+            const response = await fetch(`/cancel-file/${encodedFilename}`, {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+              }
+            });
+
+            if (response.ok) {
+              const result = await response.json();
+              console.log(`File ${filename} cancelled:`, result.message);
+
+              // Update UI to show cancelled status immediately
+              progressDivItem.textContent = 'Cancelled';
+              progressDivItem.style.color = '#dc3545';
+
+              // Remove cancel button
+              cancelFileBtn.remove();
+            } else {
+              const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+              console.error(`Failed to cancel file ${filename}:`, errorData.error);
+
+              // Re-enable button
+              cancelFileBtn.disabled = false;
+              cancelFileBtn.innerHTML = '<i class="fas fa-times"></i>';
+              cancelFileBtn.style.cursor = 'pointer';
+            }
+          } catch (error) {
+            console.error(`Error cancelling file ${filename}:`, error);
+
+            // Re-enable button
+            cancelFileBtn.disabled = false;
+            cancelFileBtn.innerHTML = '<i class="fas fa-times"></i>';
+            cancelFileBtn.style.cursor = 'pointer';
+          }
+        };
+
+        itemDiv.appendChild(fileNameDiv);
+        itemDiv.appendChild(progressDivItem);
+        itemDiv.appendChild(cancelFileBtn);
+      } else {
+        itemDiv.appendChild(fileNameDiv);
+        itemDiv.appendChild(progressDivItem);
+      }
+
       progressContainer.appendChild(itemDiv);
     });
   } else {

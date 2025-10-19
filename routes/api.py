@@ -637,11 +637,6 @@ def serve_assembled_file(chunk_id: str, filename: str):
 def start_swap():
     """Start face swap processing with uploaded file URLs."""
     try:
-        if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
-            return jsonify({
-                "error": "Processing is already in progress. Please wait for the current batch to complete."
-            }), 409
-
         cleanup_expired_chunks()
 
         data = request.get_json()
@@ -709,7 +704,7 @@ def start_swap():
                     upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": "Cannot read source image"}), 400
 
-        source_faces = face_services.detector.detect_faces(source_img)
+        source_faces = batch_processor.swap_processor.face_services.detector.detect_faces(source_img)
         if not source_faces.success:
             file_processor.cleanup_temp_files([source_assembled_path] + target_assembled_paths)
             with progress_lock:
@@ -766,13 +761,6 @@ def _validate_request(src_file, tgt_files):
 def swapface_api():
     """Handle face swap requests with optimized uploading."""
     try:
-        # Check if already processing
-        if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
-            return jsonify({
-                "error": "Processing is already in progress. Please wait for the current batch to complete.",
-                "retry_after": 30  # Suggest retry after 30 seconds
-            }), 409
-
         cleanup_expired_uploads()  # Clean up old upload sessions
 
         src_file = request.files.get("source")
@@ -833,7 +821,7 @@ def swapface_api():
 
         # Validate source face
         logger.info("Detecting faces in source image...")
-        source_faces = face_services.detector.detect_faces(source_img)
+        source_faces = batch_processor.swap_processor.face_services.detector.detect_faces(source_img)
         if not source_faces.success:
             file_processor.cleanup_temp_files([src_path] + target_files)
             with progress_lock:
@@ -897,6 +885,9 @@ def get_status():
         current_time = __import__('time').time()
         elapsed = current_time - progress.start_time if progress.start_time else 0
 
+        # Get queue information
+        queue_size = batch_processor.get_queue_size()
+
         status = {
             "is_processing": not progress.is_complete,
             "completed": progress.completed,
@@ -904,6 +895,7 @@ def get_status():
             "progress_percentage": progress.progress_percentage,
             "current_file": progress.current_file,
             "queue": progress.queue,
+            "batch_queue_size": queue_size,
             "start_time": progress.start_time,
             "elapsed": elapsed,
             "results": []
@@ -979,6 +971,35 @@ def cancel_processing():
     except Exception as e:
         logger.error(f"Cancel API error: {e}")
         return jsonify({"error": f"Cancel API error: {str(e)}"}), 500
+
+
+@api_bp.route("/cancel-file/<filename>", methods=["POST"])
+@auth.login_required
+def cancel_file_processing(filename):
+    """Cancel processing of a specific file in current batch."""
+    try:
+        # Decode filename if it's URL encoded
+        from urllib.parse import unquote
+        filename = unquote(filename)
+
+        progress = batch_processor.get_progress()
+        if not progress or progress.is_complete:
+            return jsonify({"error": "No active processing found"}), 400
+
+        # Add to cancelled files list in progress
+        if not hasattr(progress, 'cancelled_files'):
+            progress.cancelled_files = []
+
+        if filename not in progress.cancelled_files:
+            progress.cancelled_files.append(filename)
+            logger.info(f"Marked file for cancellation: {filename}")
+            return jsonify({"message": f"File '{filename}' marked for cancellation"}), 200
+        else:
+            return jsonify({"message": f"File '{filename}' is already cancelled"}), 200
+
+    except Exception as e:
+        logger.error(f"Cancel file API error: {e}")
+        return jsonify({"error": f"Cancel file API error: {str(e)}"}), 500
 
 
 @api_bp.route("/view/<path:filename>")
@@ -1323,8 +1344,8 @@ def swapface_url_api():
                 return jsonify({"error": "Cannot read target image"}), 400
 
             # Detect faces
-            face_result = face_services.detector.detect_faces(face_img)
-            target_result = face_services.detector.detect_faces(target_img)
+            face_result = batch_processor.swap_processor.face_services.detector.detect_faces(face_img)
+            target_result = batch_processor.swap_processor.face_services.detector.detect_faces(target_img)
 
             # If no face detected in either image, return target image
             if not face_result.success or not target_result.success:
@@ -1340,7 +1361,7 @@ def swapface_url_api():
             source_face = face_result.faces[0]
             target_face = target_result.faces[0]
 
-            swapped_img = face_services.swapper.swap_faces(source_face, target_img, target_face)
+            swapped_img = batch_processor.swap_processor.face_services.swapper.swap_faces(source_face, target_img, target_face)
 
             if swapped_img is None:
                 logger.warning("Face swap failed, returning target image")

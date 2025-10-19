@@ -601,7 +601,7 @@ class SwapProcessor:
                     error_message="Cannot read source image"
                 ) for _ in target_filenames]
 
-            source_result = self.face_services.detector.detect_faces(source_img)
+            source_result = self.swap_processor.face_services.detector.detect_faces(source_img)
             if not source_result.success:
                 return [SwapResult(
                     success=False,
@@ -658,61 +658,12 @@ class BatchProcessor:
         self.processing_thread: Optional[threading.Thread] = None
         self.state_file_path = f"{config.output_directory}/processing_state.json"
 
+        # Batch queue for sequential processing
+        self.batch_queue: List[Dict[str, Any]] = []
+        self.queue_lock = threading.Lock()
+
         # Load persisted state on initialization
         self.load_processing_state()
-
-    def save_processing_state(self):
-        """Save current processing state to disk."""
-        if self.processing_progress and not self.processing_progress.is_complete:
-            try:
-                # Create serializable state
-                state = {
-                    'cancel_flag': self.cancel_flag,
-                    'progress': {
-                        'total_files': self.processing_progress.total_files,
-                        'completed': self.processing_progress.completed,
-                        'progress_percentage': self.processing_progress.progress_percentage,
-                        'current_file': self.processing_progress.current_file,
-                        'start_time': self.processing_progress.start_time,
-                        'queue': self.processing_progress.queue or [],
-                    },
-                    'file_progress': {},
-                    'results': []
-                }
-
-                # Serialize file progress
-                if self.processing_progress.file_progress:
-                    for filename, file_prog in self.processing_progress.file_progress.items():
-                        state['file_progress'][filename] = {
-                            'filename': file_prog.filename,
-                            'status': file_prog.status,
-                            'file_type': file_prog.file_type,
-                            'progress_percentage': file_prog.progress_percentage,
-                            'current_frame': file_prog.current_frame,
-                            'total_frames': file_prog.total_frames,
-                            'start_time': file_prog.start_time,
-                            'estimated_time': getattr(file_prog, 'estimated_time', None),
-                            'progress_text': getattr(file_prog, 'progress_text', ''),
-                        }
-
-                # Serialize results
-                if self.processing_progress.results:
-                    for result in self.processing_progress.results:
-                        state['results'].append({
-                            'success': result.success,
-                            'error_message': result.error_message,
-                            'original_name': result.original_name,
-                            'file_type': result.file_type.value if hasattr(result.file_type, 'value') else None,
-                            'output_path': result.output_path,
-                        })
-
-                # Save to file
-                with open(self.state_file_path, 'w') as f:
-                    json.dump(state, f, indent=2, default=str)
-                logger.debug("Processing state saved")
-
-            except Exception as e:
-                logger.error(f"Error saving processing state: {e}")
 
     def load_processing_state(self):
         """Load processing state from disk if it exists."""
@@ -774,6 +725,10 @@ class BatchProcessor:
                                 result.file_type = FileType(result_data['file_type'])
                             self.processing_progress.results.append(result)
 
+                    # Restore cancelled files
+                    cancelled_files = state.get('cancelled_files', [])
+                    self.processing_progress.cancelled_files = cancelled_files
+
                 logger.info("Processing state loaded from disk")
                 return True
 
@@ -788,6 +743,60 @@ class BatchProcessor:
                 pass
 
         return False
+
+    def save_processing_state(self):
+        """Save current processing state to disk."""
+        try:
+            if self.processing_progress:
+                # Create serializable state
+                state = {
+                    'cancel_flag': self.cancel_flag,
+                    'progress': {
+                        'total_files': self.processing_progress.total_files,
+                        'completed': self.processing_progress.completed,
+                        'progress_percentage': self.processing_progress.progress_percentage,
+                        'current_file': self.processing_progress.current_file,
+                        'start_time': self.processing_progress.start_time,
+                        'queue': self.processing_progress.queue or [],
+                    },
+                    'file_progress': {},
+                    'results': [],
+                    'cancelled_files': getattr(self.processing_progress, 'cancelled_files', [])
+                }
+
+                # Serialize file progress
+                if self.processing_progress.file_progress:
+                    for filename, file_prog in self.processing_progress.file_progress.items():
+                        state['file_progress'][filename] = {
+                            'filename': file_prog.filename,
+                            'status': file_prog.status,
+                            'file_type': file_prog.file_type,
+                            'progress_percentage': file_prog.progress_percentage,
+                            'current_frame': file_prog.current_frame,
+                            'total_frames': file_prog.total_frames,
+                            'start_time': file_prog.start_time,
+                            'estimated_time': getattr(file_prog, 'estimated_time', None),
+                            'progress_text': getattr(file_prog, 'progress_text', ''),
+                        }
+
+                # Serialize results
+                if self.processing_progress.results:
+                    for result in self.processing_progress.results:
+                        state['results'].append({
+                            'success': result.success,
+                            'error_message': result.error_message,
+                            'original_name': result.original_name,
+                            'file_type': result.file_type.value if hasattr(result.file_type, 'value') else None,
+                            'output_path': result.output_path,
+                        })
+
+                # Save to file
+                with open(self.state_file_path, 'w') as f:
+                    json.dump(state, f, indent=2, default=str)
+                logger.debug("Processing state saved")
+
+        except Exception as e:
+            logger.error(f"Error saving processing state: {e}")
 
     def clear_processing_state(self):
         """Clear persisted processing state."""
@@ -806,6 +815,11 @@ class BatchProcessor:
         """Get current processing progress."""
         return self.processing_progress
 
+    def get_queue_size(self) -> int:
+        """Get the number of batches in the queue."""
+        with self.queue_lock:
+            return len(self.batch_queue)
+
     def cancel_processing(self) -> bool:
         """Cancel ongoing processing."""
         if self.processing_progress and not self.processing_progress.is_complete:
@@ -815,16 +829,43 @@ class BatchProcessor:
             return True
         return False
 
-    def start_background_processing(
+    def add_batch_to_queue(
         self,
         source_path: str,
         target_paths: List[str],
         target_filenames: List[str],
         swap_all_faces: bool = False
     ) -> bool:
-        """Start background batch processing."""
-        if self.processing_progress and not self.processing_progress.is_complete:
-            return False  # Already processing
+        """Add a batch to the processing queue."""
+        batch = {
+            'source_path': source_path,
+            'target_paths': target_paths,
+            'target_filenames': target_filenames,
+            'swap_all_faces': swap_all_faces,
+            'submitted_time': time.time()
+        }
+
+        with self.queue_lock:
+            self.batch_queue.append(batch)
+            logger.info(f"Added batch with {len(target_filenames)} files to queue. Queue size: {len(self.batch_queue)}")
+
+        # Start processing if no current batch is running
+        if not self.processing_progress or self.processing_progress.is_complete:
+            self._start_next_batch_from_queue()
+
+        return True
+
+    def _start_next_batch_from_queue(self) -> bool:
+        """Start processing the next batch from queue."""
+        with self.queue_lock:
+            if not self.batch_queue:
+                return False
+            batch = self.batch_queue.pop(0)
+
+        source_path = batch['source_path']
+        target_paths = batch['target_paths']
+        target_filenames = batch['target_filenames']
+        swap_all_faces = batch['swap_all_faces']
 
         self.processing_progress = ProcessingProgress(
             total_files=len(target_paths),
@@ -837,17 +878,59 @@ class BatchProcessor:
         # Save state immediately when starting
         self.save_processing_state()
 
-        # Add processing lock to prevent concurrent uploads
-        import threading
-        self.processing_lock = threading.Lock()
-        with self.processing_lock:
-            thread = threading.Thread(
-                target=self._process_batch,
-                args=(source_path, target_paths, target_filenames, swap_all_faces),
-                daemon=True
-            )
-            thread.start()
-            return True
+        # Start processing thread
+        thread = threading.Thread(
+            target=self._process_batch_with_queue,
+            args=(source_path, target_paths, target_filenames, swap_all_faces),
+            daemon=True
+        )
+        thread.start()
+        return True
+
+    def start_background_processing(
+        self,
+        source_path: str,
+        target_paths: List[str],
+        target_filenames: List[str],
+        swap_all_faces: bool = False
+    ) -> bool:
+        """Start background batch processing (adds to queue and processes immediately if possible)."""
+        return self.add_batch_to_queue(source_path, target_paths, target_filenames, swap_all_faces)
+
+    def _process_batch_with_queue(
+        self,
+        source_path: str,
+        target_paths: List[str],
+        target_filenames: List[str],
+        swap_all_faces: bool = False
+    ):
+        """Background processing thread for queued batch."""
+        try:
+            # Initialize file progress tracking
+            self._initialize_file_progress(target_filenames, target_paths)
+            self.processing_progress.queue = target_filenames.copy()
+
+            results = self._process_files_sequentially(source_path, target_paths, target_filenames, swap_all_faces)
+            self.processing_progress.results = results
+            self.processing_progress.completed = len(target_paths)
+
+        except Exception as e:
+            logger.error(f"Background processing error: {e}")
+            # Mark processing as complete with error
+            if self.processing_progress:
+                self.processing_progress.results = [
+                    SwapResult(success=False, error_message=str(e))
+                    for _ in target_filenames
+                ]
+
+        finally:
+            # Mark as complete and start next batch if available
+            if self.processing_progress:
+                # Setting completed to total_files makes is_complete property return True
+                self.processing_progress.completed = self.processing_progress.total_files
+
+            # Start next batch from queue
+            self._start_next_batch_from_queue()
 
     def _process_batch(
         self,
@@ -917,6 +1000,10 @@ class BatchProcessor:
     def _process_files_sequentially(self, source_path: str, target_paths: List[str], target_filenames: List[str], swap_all_faces: bool = False) -> List[SwapResult]:
         """Process files sequentially with individual progress tracking."""
         try:
+            # Initialize cancelled_files if not exists
+            if not hasattr(self.processing_progress, 'cancelled_files'):
+                self.processing_progress.cancelled_files = []
+
             # Load and cache source face
             source_img = cv2.imread(source_path)
             if source_img is None:
@@ -934,24 +1021,37 @@ class BatchProcessor:
 
             source_face_cache = source_result.faces[0]
             results = []
+            processed_count = 0
 
             # Process each target
             for i, (target_path, target_filename) in enumerate(zip(target_paths, target_filenames)):
-                # Check for cancellation before processing each file
+                # Check for full cancellation before processing each file
                 if self.cancel_flag:
-                    logger.info(f"Cancellation detected before processing {target_filename}, stopping...")
+                    logger.info(f"Full cancellation detected before processing {target_filename}, stopping...")
                     # Mark remaining files as cancelled
                     for j in range(i, len(target_filenames)):
                         remaining_filename = target_filenames[j]
-                        self._update_file_progress(remaining_filename, "cancelled")
-                        results.append(SwapResult(
-                            success=False,
-                            error_message="Processing cancelled by user",
-                            original_name=remaining_filename
-                        ))
+                        if remaining_filename not in self.processing_progress.cancelled_files:
+                            self._update_file_progress(remaining_filename, "cancelled")
+                            results.append(SwapResult(
+                                success=False,
+                                error_message="Processing cancelled by user",
+                                original_name=remaining_filename
+                            ))
                     break
 
-                logger.info(f"Processing {i+1}/{len(target_paths)}: {target_filename}")
+                # Check if this specific file was cancelled
+                if target_filename in self.processing_progress.cancelled_files:
+                    logger.info(f"Skipping cancelled file: {target_filename}")
+                    self._update_file_progress(target_filename, "cancelled", progress_percentage=0.0)
+                    results.append(SwapResult(
+                        success=False,
+                        error_message="File cancelled by user",
+                        original_name=target_filename
+                    ))
+                    continue
+
+                logger.info(f"Processing {processed_count+1}/{len(target_paths)}: {target_filename}")
 
                 # Update progress: mark as processing
                 self._update_file_progress(target_filename, "processing", start_time=time.time())
@@ -961,6 +1061,7 @@ class BatchProcessor:
                     source_face_cache, target_path, target_filename, swap_all_faces
                 )
                 results.append(result)
+                processed_count += 1
 
                 # Mark as completed
                 self._update_file_progress(
@@ -970,7 +1071,7 @@ class BatchProcessor:
                 )
 
                 # Update overall progress
-                self.processing_progress.completed = i + 1
+                self.processing_progress.completed = processed_count
                 self.processing_progress.current_file = target_filename
 
             return results
