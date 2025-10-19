@@ -45,13 +45,16 @@ def create_app() -> Flask:
     # Configure Flask for large file uploads (up to 20GB)
     app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024 * 1024  # 20GB max file size
     app.config['UPLOAD_FOLDER'] = config.temp_directory
-    # Configure timeouts for large file uploads
-    app.config['TIMEOUT'] = 7200  # 2 hour timeout for requests
+    # Configure timeouts for large file uploads - increased for chunk handling
+    app.config['TIMEOUT'] = 7200  # 2 hour timeout for requests (unchanged for processing)
+    app.config['PERMANENT_SESSION_LIFETIME'] = 7200  # 2 hours for sessions
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # Disable file caching
 
-    # Additional configs for large uploads
+    # Additional configs for large uploads and chunk processing
     app.config['MAX_FORM_MEMORY_SIZE'] = 100 * 1024 * 1024  # 100MB for form memory
     app.config['MAX_FORM_PARTS'] = 1000  # Allow many form parts
+    # Disable strict slash behavior for tus-style endpoints
+    app.config['STRICT_SLASHES'] = False
 
     logger.info("🚀 Initializing face swapping application...")
 

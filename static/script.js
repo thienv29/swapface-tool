@@ -453,6 +453,10 @@ function removeSingleFile(inputId, filename) {
 let statusPollingInterval = null;
 let processingStartTime = null;
 
+// Tus resumable upload variables
+let tusUpload = null;
+let tusProgressInterval = null;
+
 // Function to handle status polling during processing
 function startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv) {
   statusPollingInterval = setInterval(async () => {
@@ -630,7 +634,60 @@ function formatTime(seconds) {
   }
 }
 
-// Form submission with optimized upload progress
+// Tus resumable upload function
+async function uploadFileWithTus(file, fileType, onProgress) {
+  return new Promise((resolve, reject) => {
+    const upload = new tus.Upload(file, {
+      endpoint: '/upload-chunk',
+      metadata: {
+        filename: file.name,
+        filetype: file.type,
+        filecategory: fileType
+      },
+      chunkSize: 5 * 1024 * 1024, // 5MB chunks
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      removeFingerprintOnSuccess: true,
+
+      onError: function(error) {
+        console.error('Upload failed:', error);
+        reject(error);
+      },
+
+      onProgress: function(bytesUploaded, bytesTotal) {
+        const percentage = bytesUploaded / bytesTotal;
+        if (onProgress) {
+          onProgress(percentage);
+        }
+      },
+
+      onSuccess: function() {
+        console.log('Upload completed:', upload.url);
+        // Extract chunk ID from upload URL and fetch final assembled URL
+        const chunkId = upload.url.split('/').pop();
+        fetch(`/upload-chunk/${chunkId}`, {
+          headers: {
+            'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+          }
+        })
+        .then(response => response.json())
+        .then(data => resolve(data.url))
+        .catch(reject);
+      },
+
+      onAfterResponse: function(req, res) {
+        // Check if upload was successful and we have the final URL
+        if (res.getStatus() >= 200 && res.getStatus() < 300) {
+          console.log('Response headers:', res.getHeader('Location'));
+        }
+      }
+    });
+
+    // Start the upload
+    upload.start();
+  });
+}
+
+// Form submission with Tus resumable upload
 const form = document.getElementById("swapForm");
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -662,254 +719,106 @@ form.addEventListener("submit", async (e) => {
   queueInfoDiv.style.display = 'none';
 
   processingStartTime = Date.now();
-  let uploadProgressInterval = null;
   let uploadId = null;
 
   try {
-    const formData = new FormData(form);
+    const sourceFile = document.getElementById('sourceInput').files[0];
+    const targetFiles = Array.from(document.getElementById('targetsInput').files);
 
-    // Calculate total upload size for progress
-    let totalUploadBytes = 0;
-    for (let [key, value] of formData.entries()) {
-      if (value instanceof File) {
-        totalUploadBytes += value.size;
+    if (!sourceFile) {
+      showError('Vui lòng chọn file nguồn');
+      return;
+    }
+
+    if (targetFiles.length === 0) {
+      showError('Vui lòng chọn ít nhất một file đích');
+      return;
+    }
+
+    // Calculate total upload size
+    const totalUploadBytes = sourceFile.size + targetFiles.reduce((sum, f) => sum + f.size, 0);
+    const totalUploadMB = (totalUploadBytes / 1024 / 1024).toFixed(1);
+
+    progressText.textContent = `Chuẩn bị upload ${targetFiles.length + 1} files (${totalUploadMB}MB)...`;
+
+    const fileUrls = [];
+    let totalUploaded = 0;
+    let currentUploadIndex = 0;
+    const totalFiles = targetFiles.length + 1;
+
+    // Upload source file first
+    progressText.textContent = `Đang upload source: ${sourceFile.name}`;
+    try {
+      const sourceUrl = await uploadFileWithTus(sourceFile, 'source', (progress) => {
+        const overallProgress = (progress + totalUploaded) / totalFiles;
+        progressFill.style.width = (overallProgress * 100) + '%';
+        const uploadedMB = (sourceFile.size * progress / 1024 / 1024).toFixed(1);
+        const fileSizeMB = (sourceFile.size / 1024 / 1024).toFixed(1);
+        progressText.textContent = `Source (${++currentUploadIndex}/${totalFiles}): ${uploadedMB}MB / ${fileSizeMB}MB (${Math.round(progress * 100)}%)`;
+      });
+      fileUrls.push({ type: 'source', url: sourceUrl, filename: sourceFile.name });
+      totalUploaded += 1;
+    } catch (error) {
+      console.error('Source file upload failed:', error);
+      showError(`Upload source file thất bại: ${error.message || error}`);
+      return;
+    }
+
+    // Upload target files
+    for (let i = 0; i < targetFiles.length; i++) {
+      const targetFile = targetFiles[i];
+      progressText.textContent = `Đang upload target ${i + 1}: ${targetFile.name}`;
+
+      try {
+        const targetUrl = await uploadFileWithTus(targetFile, 'target', (progress) => {
+          const overallProgress = (progress + totalUploaded) / totalFiles;
+          progressFill.style.width = (overallProgress * 100) + '%';
+          const uploadedMB = (targetFile.size * progress / 1024 / 1024).toFixed(1);
+          const fileSizeMB = (targetFile.size / 1024 / 1024).toFixed(1);
+          const fileIndex = i + 1;
+          progressText.textContent = `Target ${fileIndex} (${currentUploadIndex}/${totalFiles}): ${uploadedMB}MB / ${fileSizeMB}MB (${Math.round(progress * 100)}%)`;
+        });
+        fileUrls.push({ type: 'target', url: targetUrl, filename: targetFile.name });
+        totalUploaded += 1;
+        currentUploadIndex = totalUploaded;
+      } catch (error) {
+        console.error(`Target file ${i + 1} upload failed:`, error);
+        showError(`Upload target file ${i + 1} thất bại: ${error.message || error}`);
+        return;
       }
     }
 
-    // Use XMLHttpRequest for upload progress
-    const xhr = new XMLHttpRequest();
+    // All uploads completed, now start processing
+    progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
+    button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
 
-    let hasStartedProcessing = false;
-
-    // Upload progress handler - enhanced with server-side progress polling
-    xhr.upload.addEventListener('progress', async (e) => {
-      if (e.lengthComputable) {
-        const percentComplete = (e.loaded / e.total) * 100;
-        const uploadedMB = (e.loaded / 1024 / 1024).toFixed(1);
-        const totalMB = (e.total / 1024 / 1024).toFixed(1);
-
-        // Start polling server progress once upload begins
-        if (uploadId && percentComplete > 5 && !uploadProgressInterval) {
-          uploadProgressInterval = setInterval(async () => {
-            try {
-              const progressRes = await fetch(`/upload-progress/${uploadId}`, {
-                headers: {
-                  'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
-                }
-              });
-              if (progressRes.ok) {
-                const progressData = await progressRes.json();
-                if (progressData.status === 'completed') {
-                  // Server-side upload complete, switch to processing phase
-                  progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
-                  button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
-                  if (uploadProgressInterval) {
-                    clearInterval(uploadProgressInterval);
-                    uploadProgressInterval = null;
-                  }
-                } else if (!hasStartedProcessing) {
-                  // Update with server progress
-                  const serverProgress = progressData.progress_percentage;
-                  progressFill.style.width = Math.max(percentComplete, serverProgress) + '%';
-                  progressText.textContent = `Đang tải lên (Server): ${progressData.files_uploaded}/${progressData.total_files} files (${serverProgress.toFixed(1)}%)`;
-                }
-              }
-            } catch (progressError) {
-              console.warn('Server progress polling error:', progressError);
-            }
-          }, 500);
-        }
-
-        // Client-side progress
-        progressFill.style.width = percentComplete + '%';
-        progressText.textContent = `Đang tải lên (Client): ${uploadedMB}MB / ${totalMB}MB (${Math.round(percentComplete)}%)`;
-
-        // Calculate upload speed
-        const elapsed = (Date.now() - processingStartTime) / 1000;
-        if (elapsed > 0) {
-          const speedMBps = (e.loaded / 1024 / 1024) / elapsed;
-          const etaSeconds = (e.total - e.loaded) / (speedMBps * 1024 * 1024);
-          processingSpeedDiv.textContent = `${speedMBps.toFixed(2)} MB/s${etaSeconds > 0 ? ` | ETA: ${formatTime(etaSeconds)}` : ''}`;
-        }
-      } else {
-        // If we can't calculate progress, show indeterminate progress
-        progressFill.style.width = '50%';
-        progressText.textContent = 'Đang tải lên... (không thể ước tính tiến độ)';
-      }
+    // Send file URLs to start processing
+    const response = await fetch('/start-swap', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+      },
+      body: JSON.stringify({
+        files: fileUrls
+      })
     });
 
-    // Upload load handler (upload complete)
-    xhr.upload.addEventListener('load', () => {
-      if (uploadProgressInterval) {
-        clearInterval(uploadProgressInterval);
-        uploadProgressInterval = null;
-      }
-      progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
-      button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
-      hasStartedProcessing = true;
-    });
+    if (response.ok) {
+      const data = await response.json();
+      uploadId = data.upload_id;
+      console.log('Processing started with ID:', uploadId);
 
-    // Upload error handler
-    xhr.upload.addEventListener('error', () => {
-      if (uploadProgressInterval) {
-        clearInterval(uploadProgressInterval);
-        uploadProgressInterval = null;
-      }
-      showError('Upload thất bại do lỗi kết nối');
-    });
+      // Start polling for status
+      startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
+    } else {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+      showError(`Không thể bắt đầu xử lý: ${errorData.error || response.statusText}`);
+    }
 
-    // Main request response handler
-    xhr.addEventListener('load', () => {
-      if (xhr.status === 202) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          uploadId = data.upload_id; // Get upload ID from server response
-          console.log('Upload ID:', uploadId);
-        } catch(e) {}
-        // Processing started, start polling for status
-        startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
-      } else {
-        if (uploadProgressInterval) {
-          clearInterval(uploadProgressInterval);
-          uploadProgressInterval = null;
-        }
-        let errorMessage = 'Có lỗi xảy ra khi bắt đầu xử lý';
-        try {
-          const data = JSON.parse(xhr.responseText);
-          errorMessage = data.error || errorMessage;
-        } catch(e) {}
-        showError(errorMessage);
-      }
-    });
-
-    // Main request error handler
-    xhr.addEventListener('error', () => {
-      if (uploadProgressInterval) {
-        clearInterval(uploadProgressInterval);
-        uploadProgressInterval = null;
-      }
-      showError('Vui lòng kiểm tra kết nối mạng và thử lại');
-    });
-
-    // Send the request
-    xhr.open('POST', '/swapface');
-    xhr.setRequestHeader('Authorization', 'Basic ' + btoa('admin:Thien1lan@123'));
-    xhr.send(formData);
   } catch (error) {
-    if (uploadProgressInterval) {
-      clearInterval(uploadProgressInterval);
-      uploadProgressInterval = null;
-    }
-    clearInterval(statusPollingInterval);
-    progressDiv.style.display = 'none';
-    progressFill.style.width = '0%';
-    showError('Vui lòng kiểm tra kết nối mạng và thử lại');
-  }
-
-  function showError(errorMessage) {
-    resultDiv.innerHTML = `
-      <div class="result-container">
-        <div class="error-message">
-          <h3><i class="fas fa-exclamation-triangle"></i> Lỗi</h3>
-          <p>${errorMessage}</p>
-        </div>
-      </div>
-    `;
-    resultDiv.style.display = 'block';
-    button.disabled = false;
-    button.innerHTML = '<i class="fas fa-magic"></i> Swap Ngay!';
-  }
-
-  function showResults(results) {
-    if (results && results.length > 0) {
-      resultDiv.innerHTML = `
-        <div class="result-container">
-          <div class="result-success">
-            <h3><i class="fas fa-check-circle"></i> Batch Swap Thành Công!</h3>
-            <p>${results.length} files được xử lý</p>
-          </div>
-          <div class="files-preview results-grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 2rem;">
-            ${results.map((result, index) => {
-              if (result.result) {
-                // Success result - show the completed file
-                return `
-                  <div class="file-item">
-                    ${result.type === 'video' ?
-                      `<video src="${result.result}" controls preload="metadata" style="width: 100%; height: auto; object-fit: contain; border-radius: 0.75rem; cursor: pointer;" onclick="showFullVideo('${result.result}', '${result.original_name}')"></video>` :
-                      `<img src="${result.result}" alt="${result.original_name}" style="width: 100%; height: auto; object-fit: contain; border-radius: 0.75rem; cursor: pointer;" onclick="showFullImage('${result.result}', '${result.original_name}')">`}
-                    <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
-                      <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                        <i class="fas fa-file-${result.type === 'image' ? 'image' : 'video'} file-icon"></i>
-                        <span class="file-name">${result.original_name}</span>
-                      </div>
-                      <div style="display: flex; gap: 0.5rem; justify-content: center;">
-                        <button class="download-btn" onclick="downloadFile('${result.result}', '${result.original_name}')" style="background: var(--success); color: white; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer; font-size: 0.875rem;">
-                          <i class="fas fa-download"></i> Tải về
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                `;
-              } else {
-                // Error result - show error state
-                return `
-                  <div class="file-item error-item">
-                    <div class="error-placeholder" style="width: 100%; height: 350px; background: #fee; border: 2px dashed #fcc; border-radius: 0.75rem; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #c33;">
-                      <i class="fas fa-exclamation-triangle" style="font-size: 3rem; margin-bottom: 1rem;"></i>
-                      <span style="font-weight: 500;">Xử lý thất bại</span>
-                    </div>
-                    <div class="file-info" style="padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem;">
-                      <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem;">
-                        <i class="fas fa-file file-icon" style="color: #c33;"></i>
-                        <span class="file-name">${result.original_name || 'Unknown'}</span>
-                      </div>
-                      <div style="text-align: center; color: #c33; font-size: 0.8rem;">
-                        ${result.error_message || 'Unknown error'}
-                      </div>
-                    </div>
-                  </div>
-                `;
-              }
-            }).join('')}
-          </div>
-
-          <!-- Modal for full image view -->
-          <div id="imageModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; align-items: center; justify-content: center;" onclick="closeModal()">
-            <div style="background: white; padding: 2rem; border-radius: 1rem; max-width: 90%; max-height: 90%; position: relative; overflow: hidden;" onclick="event.stopPropagation()">
-              <button onclick="closeModal()" style="position: absolute; top: 1rem; right: 1rem; background: var(--error); color: white; border: none; border-radius: 50%; width: 3rem; height: 3rem; font-size: 1.5rem; cursor: pointer;">&times;</button>
-              <img id="modalImage" src="" alt="" style="max-width: 100%; max-height: 100%; object-fit: contain;">
-              <p id="modalCaption" style="text-align: center; margin-top: 1rem; font-weight: 500;"></p>
-            </div>
-          </div>
-        </div>
-      `;
-
-    } else {
-      resultDiv.innerHTML = `
-        <div class="result-container">
-          <div class="error-message">
-            <h3><i class="fas fa-exclamation-triangle"></i> Có Lỗi Xảy Ra</h3>
-            <p>Không có kết quả để hiển thị</p>
-          </div>
-        </div>
-      `;
-    }
-
-    resultDiv.style.display = 'block';
-  }
-
-  function formatTime(seconds) {
-    if (seconds < 60) {
-      return `${Math.round(seconds)}s`;
-    } else if (seconds < 3600) {
-      const mins = Math.floor(seconds / 60);
-      const secs = Math.round(seconds % 60);
-      return `${mins}m ${secs}s`;
-    } else {
-      const hours = Math.floor(seconds / 3600);
-      const mins = Math.floor((seconds % 3600) / 60);
-      return `${hours}h ${mins}m`;
-    }
+    console.error('Upload process error:', error);
+    showError('Có lỗi xảy ra trong quá trình upload. Vui lòng thử lại.');
   }
 });
 
@@ -962,8 +871,8 @@ function updateIndividualFileProgress(statusData) {
       fileNameDiv.style.cssText = 'font-weight: 500; font-size: 0.9rem; color: #333; flex: 1; margin-right: 1rem;';
       fileNameDiv.textContent = filename;
 
-      const progressDiv = document.createElement('div');
-      progressDiv.style.cssText = `
+      const progressDivItem = document.createElement('div');
+      progressDivItem.style.cssText = `
         font-size: 0.85rem;
         color: ${progress.status === 'completed' ? '#28a745' : progress.status === 'error' ? '#dc3545' : '#007bff'};
         font-weight: 500;
@@ -978,10 +887,10 @@ function updateIndividualFileProgress(statusData) {
         displayText = progress.progress_text || 'Processing...';
       }
 
-      progressDiv.textContent = displayText;
+      progressDivItem.textContent = displayText;
 
       itemDiv.appendChild(fileNameDiv);
-      itemDiv.appendChild(progressDiv);
+      itemDiv.appendChild(progressDivItem);
       progressContainer.appendChild(itemDiv);
     });
   } else {

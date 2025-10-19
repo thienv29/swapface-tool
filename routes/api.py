@@ -56,6 +56,10 @@ face_services.initialize()
 upload_progress: Dict[str, Dict[str, Any]] = {}
 progress_lock = threading.Lock()
 
+# Global chunk storage for resumable uploads
+chunk_storage: Dict[str, Dict[str, Any]] = {}
+chunk_lock = threading.Lock()
+
 # Create blueprint
 api_bp = Blueprint('api', __name__)
 
@@ -162,6 +166,574 @@ def cleanup_expired_uploads():
         for upload_id in expired_ids:
             del upload_progress[upload_id]
             logger.info(f"Cleaned up expired upload session: {upload_id}")
+
+
+def cleanup_expired_chunks():
+    """Clean up expired chunk sessions (older than 24 hours)."""
+    current_time = time.time()
+    expired_ids = []
+    with chunk_lock:
+        for chunk_id, session in chunk_storage.items():
+            if current_time - session["start_time"] > 24 * 3600:  # 24 hours
+                expired_ids.append(chunk_id)
+                # Clean up chunk files
+                try:
+                    import os
+                    import shutil
+                    if os.path.exists(session["chunk_dir"]):
+                        shutil.rmtree(session["chunk_dir"])
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup chunk directory {session['chunk_dir']}: {e}")
+
+        for chunk_id in expired_ids:
+            del chunk_storage[chunk_id]
+            logger.info(f"Cleaned up expired chunk session: {chunk_id}")
+
+
+@api_bp.route("/upload-chunk/<path:chunk_id>", methods=["PATCH", "HEAD"])
+@auth.login_required
+def upload_chunk_data(chunk_id: str):
+    """Handle chunk data uploads for specific chunk sessions."""
+    if request.method == 'PATCH':
+        return _handle_chunk_upload_for_id(chunk_id)
+    elif request.method == 'HEAD':
+        return _handle_chunk_status_for_id(chunk_id)
+
+def _handle_chunk_upload_for_id(chunk_id: str):
+    """Handle chunk data upload for a specific session."""
+    try:
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return "Chunk session not found", 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+            if chunk_info["completed"]:
+                response = Response(status=200)
+                response.headers['Tus-Resumable'] = '1.0.0'
+                response.headers['Upload-Offset'] = str(chunk_info["uploaded_size"])
+                return response
+
+        # Get upload offset
+        upload_offset = request.headers.get('Upload-Offset')
+        if upload_offset is None:
+            return "Missing Upload-Offset header", 400
+
+        upload_offset = int(upload_offset)
+
+        # Read chunk data
+        chunk_data = request.get_data()
+        if not chunk_data:
+            return "No chunk data provided", 400
+
+        chunk_size = len(chunk_data)
+
+        # Validate offset
+        with chunk_lock:
+            chunk_info = chunk_storage[chunk_id]
+            if upload_offset != chunk_info["uploaded_size"]:
+                return f"Invalid offset: {upload_offset} != {chunk_info['uploaded_size']}", 409
+
+        # Save chunk to file
+        chunk_filename = f"chunk_{upload_offset:010d}"
+        chunk_path = os.path.join(chunk_info["chunk_dir"], chunk_filename)
+
+        with open(chunk_path, 'wb') as f:
+            f.write(chunk_data)
+
+        # Update chunk info
+        with chunk_lock:
+            chunk_storage[chunk_id]["uploaded_size"] += chunk_size
+            chunk_storage[chunk_id]["chunks"].append({
+                "offset": upload_offset,
+                "size": chunk_size,
+                "path": chunk_path
+            })
+
+            # Check if upload is complete
+            if chunk_storage[chunk_id]["uploaded_size"] >= chunk_storage[chunk_id]["total_size"]:
+                chunk_storage[chunk_id]["completed"] = True
+
+            logger.info(f"Chunk {chunk_id}: {chunk_storage[chunk_id]['uploaded_size']}/{chunk_storage[chunk_id]['total_size']} bytes")
+
+        response = Response(status=204)
+        response.headers['Tus-Resumable'] = '1.0.0'
+        response.headers['Upload-Offset'] = str(chunk_storage[chunk_id]["uploaded_size"])
+        return response
+
+    except Exception as e:
+        logger.error(f"Chunk upload for ID error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+def _handle_chunk_status_for_id(chunk_id: str):
+    """Handle chunk status check for a specific session."""
+    try:
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return "Chunk session not found", 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+        response = Response(status=200)
+        response.headers['Tus-Resumable'] = '1.0.0'
+        response.headers['Upload-Offset'] = str(chunk_info["uploaded_size"])
+        response.headers['Upload-Length'] = str(chunk_info["total_size"])
+
+        if chunk_info["completed"]:
+            response.headers['Upload-Complete'] = '1'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Chunk status for ID error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@api_bp.route("/upload-chunk", methods=["POST", "HEAD", "OPTIONS"])
+@auth.login_required
+def upload_chunk():
+    """Tus-compatible resumable upload endpoint."""
+    try:
+        # Handle pre-flight request
+        if request.method == 'OPTIONS':
+            response = Response()
+            response.headers['Tus-Resumable'] = '1.0.0'
+            response.headers['Tus-Version'] = '1.0.0'
+            response.headers['Tus-Max-Size'] = str(20 * 1024 * 1024 * 1024)  # 20GB
+            response.headers['Tus-Extension'] = 'creation,expiration'
+            return response
+
+        # Handle creation request
+        if request.method == 'POST':
+            return _handle_chunk_creation()
+
+        # Handle chunk upload
+        if request.method == 'PATCH':
+            return _handle_chunk_upload()
+
+        # Handle HEAD request (status check)
+        if request.method == 'HEAD':
+            return _handle_chunk_status()
+
+    except Exception as e:
+        logger.error(f"Chunk upload error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _handle_chunk_creation():
+    """Handle chunk upload creation."""
+    try:
+        cleanup_expired_chunks()
+
+        # Get metadata from headers
+        upload_length = request.headers.get('Upload-Length')
+        upload_metadata = request.headers.get('Upload-Metadata', '')
+
+        if not upload_length:
+            return "Missing Upload-Length header", 400
+
+        upload_length = int(upload_length)
+        max_size = 20 * 1024 * 1024 * 1024  # 20GB
+        if upload_length > max_size:
+            return f"Upload too large: {upload_length} > {max_size}", 413
+
+        # Parse metadata - tus.js sends base64-encoded values, keys are plain text
+        import base64
+        logger.info(f"Raw upload metadata: '{upload_metadata}'")
+        metadata = {}
+        if upload_metadata:
+            parts = upload_metadata.split(',')
+            logger.info(f"Split metadata parts: {parts}")
+            for part in parts:
+                part = part.strip()
+
+                # Handle various metadata formats that tus.js might send
+                if ':' in part:
+                    # Format: key:value
+                    key, value = part.split(':', 1)
+                    key = key.strip()
+                    value = value.strip()
+                elif ' ' in part and '=' not in part:
+                    # Format: key value (space separated)
+                    key, value = part.split(' ', 1)
+                    key = key.strip()
+                    value = value.strip()
+                elif '=' in part:
+                    # Format: key=value
+                    key, value = part.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                else:
+                    # Try to decode the entire part as base64 for debugging
+                    try:
+                        decoded_part = base64.b64decode(part).decode('utf-8')
+                        logger.warning(f"Cannot parse metadata part '{part}', decoded to: '{decoded_part}'")
+                        continue
+                    except:
+                        logger.warning(f"Skipping unparseable metadata part: '{part}'")
+                        continue
+
+                # Decode base64 values
+                if value:
+                    try:
+                        # Remove any trailing padding that might be causing issues
+                        if not value.endswith('='):
+                            # Try to decode as-is first
+                            decoded_value = base64.b64decode(value).decode('utf-8')
+                        else:
+                            # Standard base64 with padding
+                            decoded_value = base64.b64decode(value).decode('utf-8')
+                        metadata[key] = decoded_value
+                        logger.info(f"Decoded metadata key='{key}', value='{decoded_value}'")
+                    except Exception as decode_error:
+                        logger.warning(f"Failed to decode metadata value '{value}' for key '{key}': {decode_error}")
+                        # Fallback: use value as-is if decoding fails
+                        metadata[key] = value
+                else:
+                    metadata[key] = ''
+                    logger.info(f"Empty metadata key='{key}'")
+
+        logger.info(f"Final parsed metadata: {metadata}")
+
+        # Create chunk session
+        chunk_id = str(uuid.uuid4())
+        chunk_dir = f"{config.temp_directory}/chunks_{chunk_id}"
+        os.makedirs(chunk_dir, exist_ok=True)
+
+        chunk_info = {
+            "chunk_id": chunk_id,
+            "start_time": time.time(),
+            "chunk_dir": chunk_dir,
+            "total_size": upload_length,
+            "uploaded_size": 0,
+            "metadata": metadata,
+            "chunks": [],
+            "completed": False
+        }
+
+        with chunk_lock:
+            chunk_storage[chunk_id] = chunk_info
+
+        logger.info(f"Created chunk session: {chunk_id}, size: {upload_length}")
+
+        # Return creation response
+        response = Response(status=201)
+        response.headers['Tus-Resumable'] = '1.0.0'
+        response.headers['Location'] = f"/upload-chunk/{chunk_id}"
+        response.headers['Upload-Offset'] = '0'
+        return response
+
+    except Exception as e:
+        logger.error(f"Chunk creation error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _handle_chunk_upload():
+    """Handle chunk data upload."""
+    try:
+        # Extract chunk ID from URL
+        chunk_id = request.path.split('/')[-1]
+
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return "Chunk session not found", 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+            if chunk_info["completed"]:
+                response = Response(status=200)
+                response.headers['Tus-Resumable'] = '1.0.0'
+                response.headers['Upload-Offset'] = str(chunk_info["uploaded_size"])
+                return response
+
+        # Get upload offset
+        upload_offset = request.headers.get('Upload-Offset')
+        if upload_offset is None:
+            return "Missing Upload-Offset header", 400
+
+        upload_offset = int(upload_offset)
+
+        # Read chunk data
+        chunk_data = request.get_data()
+        if not chunk_data:
+            return "No chunk data provided", 400
+
+        chunk_size = len(chunk_data)
+
+        # Validate offset
+        with chunk_lock:
+            chunk_info = chunk_storage[chunk_id]
+            if upload_offset != chunk_info["uploaded_size"]:
+                return f"Invalid offset: {upload_offset} != {chunk_info['uploaded_size']}", 409
+
+        # Save chunk to file
+        chunk_filename = f"chunk_{upload_offset:010d}"
+        chunk_path = os.path.join(chunk_info["chunk_dir"], chunk_filename)
+
+        with open(chunk_path, 'wb') as f:
+            f.write(chunk_data)
+
+        # Update chunk info
+        with chunk_lock:
+            chunk_storage[chunk_id]["uploaded_size"] += chunk_size
+            chunk_storage[chunk_id]["chunks"].append({
+                "offset": upload_offset,
+                "size": chunk_size,
+                "path": chunk_path
+            })
+
+            # Check if upload is complete
+            if chunk_storage[chunk_id]["uploaded_size"] >= chunk_storage[chunk_id]["total_size"]:
+                chunk_storage[chunk_id]["completed"] = True
+
+            logger.info(f"Chunk {chunk_id}: {chunk_storage[chunk_id]['uploaded_size']}/{chunk_storage[chunk_id]['total_size']} bytes")
+
+        response = Response(status=204)
+        response.headers['Tus-Resumable'] = '1.0.0'
+        response.headers['Upload-Offset'] = str(chunk_storage[chunk_id]["uploaded_size"])
+        return response
+
+    except Exception as e:
+        logger.error(f"Chunk upload error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _handle_chunk_status():
+    """Handle chunk status check."""
+    try:
+        chunk_id = request.path.split('/')[-1]
+
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return "Chunk session not found", 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+        response = Response(status=200)
+        response.headers['Tus-Resumable'] = '1.0.0'
+        response.headers['Upload-Offset'] = str(chunk_info["uploaded_size"])
+        response.headers['Upload-Length'] = str(chunk_info["total_size"])
+
+        if chunk_info["completed"]:
+            response.headers['Upload-Complete'] = '1'
+
+        return response
+
+    except Exception as e:
+        logger.error(f"Chunk status error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/upload-chunk/<chunk_id>", methods=["GET"])
+@auth.login_required
+def get_uploaded_file(chunk_id: str):
+    """Get the assembled uploaded file."""
+    try:
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return jsonify({"error": "Chunk session not found"}), 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+            if not chunk_info["completed"]:
+                return jsonify({"error": "Upload not completed"}), 400
+
+        # Assemble file if not already assembled
+        assembled_path = _assemble_chunks(chunk_id)
+        if not assembled_path:
+            return jsonify({"error": "Failed to assemble file"}), 500
+
+        # Generate final URL
+        filename = chunk_info["metadata"].get("filename", "unknown")
+        logger.info(f"Chunk metadata: {chunk_info['metadata']}")
+        logger.info(f"Resolved filename: {filename}")
+        file_url = f"/chunk-assembly/{chunk_id}/{filename}"
+
+        return jsonify({
+            "url": file_url,
+            "filename": filename,
+            "size": chunk_info["total_size"],
+            "type": chunk_info["metadata"].get("filetype", "application/octet-stream")
+        })
+
+    except Exception as e:
+        logger.error(f"Get uploaded file error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _assemble_chunks(chunk_id: str) -> Optional[str]:
+    """Assemble all chunks into a complete file."""
+    try:
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return None
+
+            chunk_info = chunk_storage[chunk_id]
+            chunk_dir = chunk_info["chunk_dir"]
+            metadata = chunk_info["metadata"]
+
+            # Check if already assembled
+            assembled_filename = f"assembled_{chunk_id}_{metadata.get('filename', 'unknown')}"
+            assembled_path = os.path.join(config.temp_directory, assembled_filename)
+
+            if os.path.exists(assembled_path):
+                return assembled_path
+
+            # Sort chunks by offset
+            chunks = sorted(chunk_info["chunks"], key=lambda x: x["offset"])
+
+            # Assemble file
+            with open(assembled_path, 'wb') as assembled_file:
+                for chunk in chunks:
+                    chunk_path = chunk["path"]
+                    if os.path.exists(chunk_path):
+                        with open(chunk_path, 'rb') as chunk_file:
+                            assembled_file.write(chunk_file.read())
+
+            # Verify assembled file size
+            if os.path.getsize(assembled_path) != chunk_info["total_size"]:
+                logger.error(f"Assembled file size mismatch: {os.path.getsize(assembled_path)} != {chunk_info['total_size']}")
+                os.remove(assembled_path)
+                return None
+
+            logger.info(f"Assembled file: {assembled_path} ({chunk_info['total_size']} bytes)")
+            return assembled_path
+
+    except Exception as e:
+        logger.error(f"Chunk assembly error: {e}")
+        return None
+
+
+@api_bp.route("/chunk-assembly/<chunk_id>/<filename>")
+@auth.login_required
+def serve_assembled_file(chunk_id: str, filename: str):
+    """Serve the assembled uploaded file."""
+    try:
+        with chunk_lock:
+            if chunk_id not in chunk_storage:
+                return jsonify({"error": "Chunk session not found"}), 404
+
+            chunk_info = chunk_storage[chunk_id]
+
+        assembled_path = _assemble_chunks(chunk_id)
+        if not assembled_path:
+            return jsonify({"error": "File assembly failed"}), 500
+
+        # Serve the file
+        from flask import send_file
+        return send_file(
+            assembled_path,
+            as_attachment=False,
+            download_name=filename,
+            mimetype=chunk_info["metadata"].get("filetype", "application/octet-stream")
+        )
+
+    except Exception as e:
+        logger.error(f"Serve assembled file error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@api_bp.route("/start-swap", methods=["POST"])
+@auth.login_required
+def start_swap():
+    """Start face swap processing with uploaded file URLs."""
+    try:
+        if batch_processor.get_progress() and not batch_processor.get_progress().is_complete:
+            return jsonify({
+                "error": "Processing is already in progress. Please wait for the current batch to complete."
+            }), 409
+
+        cleanup_expired_chunks()
+
+        data = request.get_json()
+        if not data or 'files' not in data:
+            return jsonify({"error": "Missing files data"}), 400
+
+        files = data['files']
+        if not files or len(files) == 0:
+            return jsonify({"error": "No files provided"}), 400
+
+        # Separate source and target files
+        source_files = [f for f in files if f['type'] == 'source']
+        target_files = [f for f in files if f['type'] == 'target']
+
+        if len(source_files) != 1:
+            return jsonify({"error": "Exactly one source file required"}), 400
+
+        if len(target_files) == 0:
+            return jsonify({"error": "At least one target file required"}), 400
+
+        source_url = source_files[0]['url']
+        target_urls = [f['url'] for f in target_files]
+        target_filenames = [f['filename'] for f in target_files]
+
+        logger.info(f"Starting swap processing for {len(target_files)} files")
+
+        # Create upload session for progress tracking
+        total_files = 1 + len(target_files)
+        estimated_total_size_mb = 2000.0
+        upload_id = create_upload_session(total_files, estimated_total_size_mb)
+
+        # Ensure source file is assembled and get its path
+        source_chunk_id = source_url.split('/')[-2]  # /upload-chunk/{chunk_id} -> chunk_id
+        source_assembled_path = _assemble_chunks(source_chunk_id)
+        if not source_assembled_path or not os.path.exists(source_assembled_path):
+            logger.error(f"Source file not assembled: chunk_id={source_chunk_id}")
+            return jsonify({"error": "Source file not assembled properly"}), 400
+
+        # Ensure target files are assembled and get their paths
+        target_assembled_paths = []
+        for i, target_url in enumerate(target_urls):
+            target_chunk_id = target_url.split('/')[-2]
+            target_assembled_path = _assemble_chunks(target_chunk_id)
+            if not target_assembled_path or not os.path.exists(target_assembled_path):
+                logger.error(f"Target file {i} not assembled: chunk_id={target_chunk_id}")
+                return jsonify({"error": f"Target file {i} not assembled properly"}), 400
+            target_assembled_paths.append(target_assembled_path)
+
+        # Update progress after validation
+        with progress_lock:
+            if upload_id in upload_progress:
+                upload_progress[upload_id]["files_uploaded"] = total_files
+                upload_progress[upload_id]["status"] = "completed"
+
+        # Validate source face
+        logger.info("Validating source image...")
+        source_img = cv2.imread(source_assembled_path)
+        if source_img is None:
+            file_processor.cleanup_temp_files([source_assembled_path] + target_assembled_paths)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
+            return jsonify({"error": "Cannot read source image"}), 400
+
+        source_faces = face_services.detector.detect_faces(source_img)
+        if not source_faces.success:
+            file_processor.cleanup_temp_files([source_assembled_path] + target_assembled_paths)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
+            return jsonify({"error": source_faces.error_message or "No source face detected"}), 400
+
+        logger.info("Starting background processing...")
+        success = batch_processor.start_background_processing(source_assembled_path, target_assembled_paths, target_filenames)
+
+        if not success:
+            file_processor.cleanup_temp_files([source_assembled_path] + target_assembled_paths)
+            with progress_lock:
+                if upload_id in upload_progress:
+                    upload_progress[upload_id]["status"] = "error"
+            return jsonify({"error": "Cannot start processing"}), 500
+
+        logger.info(f"Processing started successfully for {len(target_files)} files")
+        return jsonify({
+            "message": "Processing started",
+            "total_files": len(target_files),
+            "upload_id": upload_id
+        }), 202
+
+    except Exception as e:
+        logger.error(f"Start swap error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 def _validate_request(src_file, tgt_files):
