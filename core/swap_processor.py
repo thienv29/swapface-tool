@@ -10,6 +10,7 @@ from typing import List, Optional, Callable, Any
 import threading
 import time
 import asyncio
+import json
 from concurrent.futures import ThreadPoolExecutor
 from .models import (
     SwapResult, ProcessingProgress, ProcessingStatus, FileType,
@@ -567,6 +568,147 @@ class BatchProcessor:
         self.processing_progress: Optional[ProcessingProgress] = None
         self.cancel_flag = False
         self.processing_thread: Optional[threading.Thread] = None
+        self.state_file_path = f"{config.output_directory}/processing_state.json"
+
+        # Load persisted state on initialization
+        self.load_processing_state()
+
+    def save_processing_state(self):
+        """Save current processing state to disk."""
+        if self.processing_progress and not self.processing_progress.is_complete:
+            try:
+                # Create serializable state
+                state = {
+                    'cancel_flag': self.cancel_flag,
+                    'progress': {
+                        'total_files': self.processing_progress.total_files,
+                        'completed': self.processing_progress.completed,
+                        'progress_percentage': self.processing_progress.progress_percentage,
+                        'current_file': self.processing_progress.current_file,
+                        'start_time': self.processing_progress.start_time,
+                        'queue': self.processing_progress.queue or [],
+                    },
+                    'file_progress': {},
+                    'results': []
+                }
+
+                # Serialize file progress
+                if self.processing_progress.file_progress:
+                    for filename, file_prog in self.processing_progress.file_progress.items():
+                        state['file_progress'][filename] = {
+                            'filename': file_prog.filename,
+                            'status': file_prog.status,
+                            'file_type': file_prog.file_type,
+                            'progress_percentage': file_prog.progress_percentage,
+                            'current_frame': file_prog.current_frame,
+                            'total_frames': file_prog.total_frames,
+                            'start_time': file_prog.start_time,
+                            'estimated_time': getattr(file_prog, 'estimated_time', None),
+                            'progress_text': getattr(file_prog, 'progress_text', ''),
+                        }
+
+                # Serialize results
+                if self.processing_progress.results:
+                    for result in self.processing_progress.results:
+                        state['results'].append({
+                            'success': result.success,
+                            'error_message': result.error_message,
+                            'original_name': result.original_name,
+                            'file_type': result.file_type.value if hasattr(result.file_type, 'value') else None,
+                            'output_path': result.output_path,
+                        })
+
+                # Save to file
+                with open(self.state_file_path, 'w') as f:
+                    json.dump(state, f, indent=2, default=str)
+                logger.debug("Processing state saved")
+
+            except Exception as e:
+                logger.error(f"Error saving processing state: {e}")
+
+    def load_processing_state(self):
+        """Load processing state from disk if it exists."""
+        try:
+            if os.path.exists(self.state_file_path):
+                with open(self.state_file_path, 'r') as f:
+                    state = json.load(f)
+
+                # Restore state
+                self.cancel_flag = state.get('cancel_flag', False)
+
+                progress_data = state.get('progress', {})
+                if progress_data:
+                    from .models import ProcessingProgress
+
+                    self.processing_progress = ProcessingProgress(
+                        total_files=progress_data.get('total_files', 0),
+                        completed=progress_data.get('completed', 0),
+                        progress_percentage=progress_data.get('progress_percentage', 0.0),
+                        current_file=progress_data.get('current_file'),
+                        start_time=progress_data.get('start_time'),
+                        queue=progress_data.get('queue', []),
+                        results=[],
+                    )
+
+                    # Restore file progress
+                    if 'file_progress' in state and state['file_progress']:
+                        from .models import FileProgress
+                        self.processing_progress.file_progress = {}
+                        for filename, file_prog_data in state['file_progress'].items():
+                            file_prog = FileProgress(
+                                filename=file_prog_data.get('filename', filename),
+                                status=file_prog_data.get('status', 'pending'),
+                                file_type=file_prog_data.get('file_type', 'unknown'),
+                                progress_percentage=file_prog_data.get('progress_percentage', 0.0),
+                                current_frame=file_prog_data.get('current_frame'),
+                                total_frames=file_prog_data.get('total_frames'),
+                            )
+                            file_prog.start_time = file_prog_data.get('start_time')
+                            if 'estimated_time' in file_prog_data:
+                                file_prog.estimated_time = file_prog_data['estimated_time']
+                            if 'progress_text' in file_prog_data:
+                                file_prog.progress_text = file_prog_data['progress_text']
+
+                            self.processing_progress.file_progress[filename] = file_prog
+
+                    # Restore results
+                    if 'results' in state and state['results']:
+                        self.processing_progress.results = []
+                        from .models import SwapResult, FileType
+                        for result_data in state['results']:
+                            result = SwapResult(
+                                success=result_data.get('success', False),
+                                error_message=result_data.get('error_message'),
+                                original_name=result_data.get('original_name'),
+                                output_path=result_data.get('output_path'),
+                            )
+                            if result_data.get('file_type'):
+                                result.file_type = FileType(result_data['file_type'])
+                            self.processing_progress.results.append(result)
+
+                logger.info("Processing state loaded from disk")
+                return True
+
+        except Exception as e:
+            logger.error(f"Error loading processing state: {e}")
+            # Clean up corrupted state file
+            try:
+                if os.path.exists(self.state_file_path):
+                    os.remove(self.state_file_path)
+                    logger.info("Removed corrupted state file")
+            except:
+                pass
+
+        return False
+
+    def clear_processing_state(self):
+        """Clear persisted processing state."""
+        try:
+            if os.path.exists(self.state_file_path):
+                os.remove(self.state_file_path)
+                logger.debug("Processing state cleared")
+        except Exception as e:
+            logger.error(f"Error clearing processing state: {e}")
 
     def is_cancelled(self) -> bool:
         """Check if processing has been cancelled."""
@@ -581,6 +723,7 @@ class BatchProcessor:
         if self.processing_progress and not self.processing_progress.is_complete:
             logger.info("Setting cancel flag for ongoing processing")
             self.cancel_flag = True
+            self.save_processing_state()  # Save state after setting cancel flag
             return True
         return False
 
@@ -601,6 +744,9 @@ class BatchProcessor:
             start_time=time.time(),
             results=[]
         )
+
+        # Save state immediately when starting
+        self.save_processing_state()
 
         # Add processing lock to prevent concurrent uploads
         import threading
@@ -640,9 +786,17 @@ class BatchProcessor:
                 ]
 
         finally:
-            # Clear queue and mark as complete
+            # Mark as complete and save final state
             if self.processing_progress:
-                self.processing_progress.queue = []
+                self.processing_progress.is_complete = True
+
+            # Save final state (or clear if successful)
+            if self.processing_progress and self.processing_progress.results:
+                # Only keep failed results for potential retry, but for now just clear
+                self.clear_processing_state()
+            else:
+                # Clear state file when done
+                self.clear_processing_state()
 
     def _initialize_file_progress(self, target_filenames: List[str], target_paths: List[str]):
         """Initialize progress tracking for each file."""

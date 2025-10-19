@@ -416,6 +416,82 @@ function downloadFile(imageSrc, filename) {
   }, 100);
 }
 
+// Check for ongoing processing on page load
+async function checkOngoingProcessing() {
+  try {
+    const response = await fetch('/status', {
+      headers: {
+        'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
+      }
+    });
+
+    if (response.ok) {
+      const statusData = await response.json();
+
+      if (statusData.is_processing) {
+        console.log('Detected ongoing processing, restoring UI state...');
+
+        // Restore UI state for ongoing processing
+        const button = document.getElementById('swapButton');
+        const resultDiv = document.getElementById("result");
+        const progressDiv = document.getElementById("progress");
+        const progressFill = document.getElementById("progressFill");
+        const progressText = document.getElementById("progressText");
+        const currentFileDiv = document.getElementById("currentFile");
+        const processingSpeedDiv = document.getElementById("processingSpeed");
+        const queueInfoDiv = document.getElementById("queueInfo");
+        const queueDetailsDiv = document.getElementById("queueDetails");
+        const cancelButton = document.getElementById('cancelButton');
+
+        // Show processing state
+        button.disabled = true;
+        button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
+        progressDiv.style.display = 'block';
+        cancelButton.style.display = 'inline-flex';
+        cancelButton.disabled = false;
+        cancelButton.innerHTML = '<i class="fas fa-times"></i> Hủy xử lý';
+
+        // Start polling for status updates
+        startProcessingStatusPolling(button, resultDiv, progressDiv, progressFill, progressText, currentFileDiv, processingSpeedDiv, queueInfoDiv, queueDetailsDiv);
+
+        // Update progress immediately with current status
+        const percentage = statusData.progress_percentage;
+        progressFill.style.width = percentage + '%';
+        progressText.textContent = `Đang tiếp tục xử lý: ${statusData.completed}/${statusData.total} (${Math.round(percentage)}%)`;
+
+        updateIndividualFileProgress(statusData);
+
+        if (statusData.current_file) {
+          currentFileDiv.textContent = `Đang xử lý: ${statusData.current_file}`;
+        }
+
+        // Update speed and ETA
+        if (statusData.speed > 0) {
+          const speedText = `${statusData.speed.toFixed(2)} files/giây`;
+          const etaText = statusData.eta_seconds > 0 ?
+            `ETA: ${formatTime(statusData.eta_seconds)}` : '';
+          processingSpeedDiv.textContent = `${speedText}${etaText ? ' | ' + etaText : ''}`;
+        }
+
+        // Update queue
+        if (statusData.queue && statusData.queue.length > 0) {
+          queueInfoDiv.style.display = 'block';
+          queueDetailsDiv.innerHTML = `
+            <div>${statusData.queue.length} files đang chờ</div>
+            <div style="font-size: 0.8rem; color: #666; margin-top: 0.25rem;">
+              ${statusData.queue.slice(0, 5).join(', ')}${statusData.queue.length > 5 ? '...' : ''}
+            </div>
+          `;
+        }
+
+        console.log('UI state restored for ongoing processing');
+      }
+    }
+  } catch (error) {
+    console.error('Error checking for ongoing processing:', error);
+  }
+}
+
 // Remove single file function
 function removeSingleFile(inputId, filename) {
   const input = document.getElementById(inputId);
@@ -876,6 +952,12 @@ form.addEventListener("submit", async (e) => {
     console.error('Upload process error:', error);
     showError('Có lỗi xảy ra trong quá trình upload. Vui lòng thử lại.');
   }
+});
+
+// Initialize page on load
+document.addEventListener('DOMContentLoaded', async () => {
+  // Check for ongoing processing immediately
+  await checkOngoingProcessing();
 });
 
 function updateIndividualFileProgress(statusData) {
