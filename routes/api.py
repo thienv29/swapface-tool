@@ -648,6 +648,9 @@ def start_swap():
         if not data or 'files' not in data:
             return jsonify({"error": "Missing files data"}), 400
 
+        # Get swap_all_faces parameter, default to False (only swap first face)
+        swap_all_faces = data.get('swap_all_faces', False)
+
         files = data['files']
         if not files or len(files) == 0:
             return jsonify({"error": "No files provided"}), 400
@@ -715,7 +718,7 @@ def start_swap():
             return jsonify({"error": source_faces.error_message or "No source face detected"}), 400
 
         logger.info("Starting background processing...")
-        success = batch_processor.start_background_processing(source_assembled_path, target_assembled_paths, target_filenames)
+        success = batch_processor.start_background_processing(source_assembled_path, target_assembled_paths, target_filenames, swap_all_faces=swap_all_faces)
 
         if not success:
             file_processor.cleanup_temp_files([source_assembled_path] + target_assembled_paths)
@@ -838,10 +841,13 @@ def swapface_api():
                     upload_progress[upload_id]["status"] = "error"
             return jsonify({"error": source_faces.error_message or "No source face detected"}), 400
 
+        # Get swap_all_faces parameter from form data, default to False (only swap first face)
+        swap_all_faces = request.form.get('swap_all_faces', 'False').lower() == 'true'
+
         logger.info("Starting background processing...")
         # Start background processing
         success = batch_processor.start_background_processing(
-            src_path, target_files, target_filenames
+            src_path, target_files, target_filenames, swap_all_faces=swap_all_faces
         )
 
         if not success:

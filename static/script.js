@@ -924,6 +924,9 @@ form.addEventListener("submit", async (e) => {
     progressText.textContent = 'Upload hoàn tất, đang bắt đầu xử lý...';
     button.innerHTML = '<span class="loading-spinner"></span> Đang Xử Lý...';
 
+    // Get toggle state
+    const swapAllFaces = document.getElementById('swapAllFaces').checked;
+
     // Send file URLs to start processing
     const response = await fetch('/start-swap', {
       method: 'POST',
@@ -932,7 +935,8 @@ form.addEventListener("submit", async (e) => {
         'Authorization': 'Basic ' + btoa('admin:Thien1lan@123')
       },
       body: JSON.stringify({
-        files: fileUrls
+        files: fileUrls,
+        swap_all_faces: swapAllFaces
       })
     });
 

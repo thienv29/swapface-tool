@@ -184,7 +184,8 @@ class SwapProcessor:
         self,
         source_face_cache,
         target_path: str,
-        target_filename: str
+        target_filename: str,
+        swap_all_faces: bool = False
     ) -> SwapResult:
         """Process a single image file."""
         try:
@@ -223,28 +224,60 @@ class SwapProcessor:
 
             # Perform swap using the cached source face
             try:
-                swapped = self.face_services.swapper.swap_faces(
-                    source_face_cache,
-                    target_img,
-                    target_result.faces[0]  # Use first detected face
-                )
+                if swap_all_faces and len(target_result.faces) > 1:
+                    # Swap all faces in the image
+                    swapped = target_img.copy()
+                    faces_swapped = 0
 
-                # Log successful swap for image
-                logger.info(f"[SWAP] Image: {target_filename}")
+                    for target_face in target_result.faces:
+                        swap_result = self.face_services.swapper.swap_faces(
+                            source_face_cache,
+                            swapped,
+                            target_face
+                        )
+                        if swap_result is not None and swap_result.size > 0:
+                            swapped = swap_result
+                            faces_swapped += 1
 
-                if swapped is None or swapped.size == 0:
-                    logger.warning(f"Face swap failed for {target_filename}, copying as original")
-                    # Copy original file to output on swap failure
-                    import shutil
-                    output_uuid = str(uuid.uuid4())
-                    output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
-                    shutil.copy2(target_path, output_path)
-                    return SwapResult(
-                        success=True,
-                        output_path=f"/view/{output_path}",
-                        original_name=target_filename,
-                        file_type=FileType.IMAGE
+                    logger.info(f"[SWAP] Image: {target_filename} - Swapped {faces_swapped}/{len(target_result.faces)} faces")
+
+                    if faces_swapped == 0:
+                        logger.warning(f"Face swap failed for all faces in {target_filename}, copying as original")
+                        # Copy original file to output on swap failure
+                        import shutil
+                        output_uuid = str(uuid.uuid4())
+                        output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                        shutil.copy2(target_path, output_path)
+                        return SwapResult(
+                            success=True,
+                            output_path=f"/view/{output_path}",
+                            original_name=target_filename,
+                            file_type=FileType.IMAGE
+                        )
+                else:
+                    # Swap only first face (legacy behavior)
+                    swapped = self.face_services.swapper.swap_faces(
+                        source_face_cache,
+                        target_img,
+                        target_result.faces[0]  # Use first detected face
                     )
+
+                    # Log successful swap for image
+                    logger.info(f"[SWAP] Image: {target_filename}")
+
+                    if swapped is None or swapped.size == 0:
+                        logger.warning(f"Face swap failed for {target_filename}, copying as original")
+                        # Copy original file to output on swap failure
+                        import shutil
+                        output_uuid = str(uuid.uuid4())
+                        output_path = f"{self.config.output_directory}/{output_uuid}_{target_filename}"
+                        shutil.copy2(target_path, output_path)
+                        return SwapResult(
+                            success=True,
+                            output_path=f"/view/{output_path}",
+                            original_name=target_filename,
+                            file_type=FileType.IMAGE
+                        )
 
                 # Save result
                 output_uuid = str(uuid.uuid4())
@@ -341,7 +374,8 @@ class SwapProcessor:
         target_path: str,
         target_filename: str,
         progress_callback: Optional[Callable[[int, int], None]] = None,
-        cancellation_callback: Optional[Callable[[], bool]] = None
+        cancellation_callback: Optional[Callable[[], bool]] = None,
+        swap_all_faces: bool = False
     ) -> SwapResult:
         """Process a single video file with audio preservation."""
         try:
@@ -364,7 +398,7 @@ class SwapProcessor:
                 # Track frame number for logging
                 frame_index = [0]
 
-                # Define swap callback for video processing
+                # Define swap callback for GIF processing
                 def swap_callback(frame):
                     # Detect faces in current frame
                     frame_result = self.face_services.detector.detect_faces(frame)
@@ -373,24 +407,51 @@ class SwapProcessor:
                         return frame
 
                     try:
-                        # Perform swap
-                        result = self.face_services.swapper.swap_faces(
-                            source_face_cache,
-                            frame,
-                            frame_result.faces[0]  # Use first detected face
-                        )
+                        if swap_all_faces and len(frame_result.faces) > 1:
+                            # Swap all faces in the frame
+                            result_frame = frame.copy()
+                            faces_swapped = 0
 
-                        frame_index[0] += 1
-                        if result is not None and result.size > 0:
-                            # Log successful swap for video frame
-                            progress_text = f"Frame {frame_index[0]}"
-                            if total_frames_for_logging:
-                                progress_text += f"/{total_frames_for_logging}"
-                            logger.info(f"[SWAP] Video: {target_filename} - {progress_text}")
-                            return result
+                            for target_face in frame_result.faces:
+                                swap_result = self.face_services.swapper.swap_faces(
+                                    source_face_cache,
+                                    result_frame,
+                                    target_face
+                                )
+                                if swap_result is not None and swap_result.size > 0:
+                                    result_frame = swap_result
+                                    faces_swapped += 1
+
+                            frame_index[0] += 1
+                            if faces_swapped > 0:
+                                # Log successful swap for GIF frame
+                                progress_text = f"Frame {frame_index[0]}"
+                                if total_frames_for_logging:
+                                    progress_text += f"/{total_frames_for_logging}"
+                                logger.info(f"[SWAP] GIF: {target_filename} - {progress_text} - Swapped {faces_swapped} faces")
+                                return result_frame
+                            else:
+                                logger.debug("Face swap failed for all faces in frame, using original frame")
+                                return frame
                         else:
-                            logger.debug("Face swap returned empty result, using original frame")
-                            return frame
+                            # Swap only first face (legacy behavior)
+                            result = self.face_services.swapper.swap_faces(
+                                source_face_cache,
+                                frame,
+                                frame_result.faces[0]  # Use first detected face
+                            )
+
+                            frame_index[0] += 1
+                            if result is not None and result.size > 0:
+                                # Log successful swap for GIF frame
+                                progress_text = f"Frame {frame_index[0]}"
+                                if total_frames_for_logging:
+                                    progress_text += f"/{total_frames_for_logging}"
+                                logger.info(f"[SWAP] GIF: {target_filename} - {progress_text}")
+                                return result
+                            else:
+                                logger.debug("Face swap returned empty result, using original frame")
+                                return frame
 
                     except Exception as e:
                         logger.debug(f"Frame swap error, using original frame: {e}")
@@ -419,24 +480,51 @@ class SwapProcessor:
                         return frame
 
                     try:
-                        # Perform swap
-                        result = self.face_services.swapper.swap_faces(
-                            source_face_cache,
-                            frame,
-                            frame_result.faces[0]  # Use first detected face
-                        )
+                        if swap_all_faces and len(frame_result.faces) > 1:
+                            # Swap all faces in the frame
+                            result_frame = frame.copy()
+                            faces_swapped = 0
 
-                        frame_index[0] += 1
-                        if result is not None and result.size > 0:
-                            # Log successful swap for video frame
-                            progress_text = f"Frame {frame_index[0]}"
-                            if total_frames_for_logging:
-                                progress_text += f"/{total_frames_for_logging}"
-                            logger.info(f"[SWAP] Video: {target_filename} - {progress_text}")
-                            return result
+                            for target_face in frame_result.faces:
+                                swap_result = self.face_services.swapper.swap_faces(
+                                    source_face_cache,
+                                    result_frame,
+                                    target_face
+                                )
+                                if swap_result is not None and swap_result.size > 0:
+                                    result_frame = swap_result
+                                    faces_swapped += 1
+
+                            frame_index[0] += 1
+                            if faces_swapped > 0:
+                                # Log successful swap for video frame
+                                progress_text = f"Frame {frame_index[0]}"
+                                if total_frames_for_logging:
+                                    progress_text += f"/{total_frames_for_logging}"
+                                logger.info(f"[SWAP] Video: {target_filename} - {progress_text} - Swapped {faces_swapped} faces")
+                                return result_frame
+                            else:
+                                logger.debug("Face swap failed for all faces in frame, using original frame")
+                                return frame
                         else:
-                            logger.debug("Face swap returned empty result, using original frame")
-                            return frame
+                            # Swap only first face (legacy behavior)
+                            result = self.face_services.swapper.swap_faces(
+                                source_face_cache,
+                                frame,
+                                frame_result.faces[0]  # Use first detected face
+                            )
+
+                            frame_index[0] += 1
+                            if result is not None and result.size > 0:
+                                # Log successful swap for video frame
+                                progress_text = f"Frame {frame_index[0]}"
+                                if total_frames_for_logging:
+                                    progress_text += f"/{total_frames_for_logging}"
+                                logger.info(f"[SWAP] Video: {target_filename} - {progress_text}")
+                                return result
+                            else:
+                                logger.debug("Face swap returned empty result, using original frame")
+                                return frame
 
                     except Exception as e:
                         logger.debug(f"Frame swap error, using original frame: {e}")
@@ -731,7 +819,8 @@ class BatchProcessor:
         self,
         source_path: str,
         target_paths: List[str],
-        target_filenames: List[str]
+        target_filenames: List[str],
+        swap_all_faces: bool = False
     ) -> bool:
         """Start background batch processing."""
         if self.processing_progress and not self.processing_progress.is_complete:
@@ -754,7 +843,7 @@ class BatchProcessor:
         with self.processing_lock:
             thread = threading.Thread(
                 target=self._process_batch,
-                args=(source_path, target_paths, target_filenames),
+                args=(source_path, target_paths, target_filenames, swap_all_faces),
                 daemon=True
             )
             thread.start()
@@ -764,7 +853,8 @@ class BatchProcessor:
         self,
         source_path: str,
         target_paths: List[str],
-        target_filenames: List[str]
+        target_filenames: List[str],
+        swap_all_faces: bool = False
     ):
         """Background processing thread."""
         try:
@@ -772,7 +862,7 @@ class BatchProcessor:
             self._initialize_file_progress(target_filenames, target_paths)
             self.processing_progress.queue = target_filenames.copy()
 
-            results = self._process_files_sequentially(source_path, target_paths, target_filenames)
+            results = self._process_files_sequentially(source_path, target_paths, target_filenames, swap_all_faces)
             self.processing_progress.results = results
             self.processing_progress.completed = len(target_paths)
 
@@ -788,7 +878,8 @@ class BatchProcessor:
         finally:
             # Mark as complete and save final state
             if self.processing_progress:
-                self.processing_progress.is_complete = True
+                # Setting completed to total_files makes is_complete property return True
+                self.processing_progress.completed = self.processing_progress.total_files
 
             # Save final state (or clear if successful)
             if self.processing_progress and self.processing_progress.results:
@@ -823,7 +914,7 @@ class BatchProcessor:
                 total_frames=total_frames
             )
 
-    def _process_files_sequentially(self, source_path: str, target_paths: List[str], target_filenames: List[str]) -> List[SwapResult]:
+    def _process_files_sequentially(self, source_path: str, target_paths: List[str], target_filenames: List[str], swap_all_faces: bool = False) -> List[SwapResult]:
         """Process files sequentially with individual progress tracking."""
         try:
             # Load and cache source face
@@ -867,7 +958,7 @@ class BatchProcessor:
 
                 # Process the file with progress callback
                 result = self._process_single_file_with_progress(
-                    source_face_cache, target_path, target_filename
+                    source_face_cache, target_path, target_filename, swap_all_faces
                 )
                 results.append(result)
 
@@ -920,7 +1011,7 @@ class BatchProcessor:
                 original_name=target_filename
             )
 
-    def _process_single_file_with_progress(self, source_face_cache, target_path: str, target_filename: str) -> SwapResult:
+    def _process_single_file_with_progress(self, source_face_cache, target_path: str, target_filename: str, swap_all_faces: bool = False) -> SwapResult:
         """Process a single file with progress tracking."""
         logger.info(f"Starting processing of file: {target_filename}")
         target_img = cv2.imread(target_path)
@@ -929,7 +1020,7 @@ class BatchProcessor:
             # Process image
             logger.debug(f"Processing image: {target_filename}")
             self._update_file_progress(target_filename, "processing", progress_percentage=50.0)
-            result = self.swap_processor.process_image(source_face_cache, target_path, target_filename)
+            result = self.swap_processor.process_image(source_face_cache, target_path, target_filename, swap_all_faces)
             if result.success:
                 logger.info(f"Image processing completed: {target_filename}")
             else:
@@ -977,7 +1068,7 @@ class BatchProcessor:
 
             logger.info(f"Starting video processing: {target_filename}")
             result = self.swap_processor.process_video_with_audio(
-                source_face_cache, target_path, target_filename, video_progress_callback, self.is_cancelled
+                source_face_cache, target_path, target_filename, video_progress_callback, self.is_cancelled, swap_all_faces
             )
 
             if result.success:
