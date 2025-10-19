@@ -431,12 +431,22 @@ function removeSingleFile(inputId, filename) {
   });
   input.files = dt.files;
 
-  // Update button text with new count and preview immediately (no delay)
+  // Update button text with new count
   updateSwapButton();
 
-  // Re-trigger preview update immediately - this will regenerate the entire preview
-  const changeEvent = new Event('change', { bubbles: true });
-  input.dispatchEvent(changeEvent);
+  // Force preview update for multiple files selection
+  const preview = document.getElementById(`${inputId === 'sourceInput' ? 'source' : 'targets'}Preview`);
+  if (filteredFiles.length === 0) {
+    // No files left, clear preview
+    if (preview) {
+      preview.style.display = 'none';
+      preview.innerHTML = '';
+    }
+  } else {
+    // Re-trigger preview update for remaining files
+    const changeEvent = new Event('change', { bubbles: true });
+    input.dispatchEvent(changeEvent);
+  }
 }
 
 // Global variables for polling
