@@ -1314,7 +1314,10 @@ def swapface_url_api():
                 try:
                     logger.info(f"Attempting to download {url} (attempt {attempt + 1}/{max_retries + 1})")
 
-                    response = requests.get(url, timeout=30, stream=True, verify=False)
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    response = requests.get(url, timeout=30, stream=True, verify=True, headers=headers)
                     response.raise_for_status()
 
                     # Check content type
