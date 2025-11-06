@@ -1317,7 +1317,9 @@ def swapface_url_api():
                     headers = {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                     }
-                    response = requests.get(url, timeout=30, stream=True, verify=True, headers=headers)
+                    # Use proxy for downloading images
+                    proxy_url = f"https://digilesson.vn/proxy.php?url={url}"
+                    response = requests.get(proxy_url, timeout=30, stream=True, verify=True, headers=headers)
                     response.raise_for_status()
 
                     # Check content type
